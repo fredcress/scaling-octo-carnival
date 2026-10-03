@@ -1,0 +1,8 @@
+.git
+.github
+.env
+tests
+scripts
+data
+demo-watch
+**/__pycache__

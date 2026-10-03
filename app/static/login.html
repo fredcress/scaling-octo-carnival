@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · Runs</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    body { display: grid; place-items: center; min-height: 100vh; padding: 16px; }
+    form { width: 100%; max-width: 340px; display: grid; gap: 14px; }
+    label { display: grid; gap: 5px; font-size: 13px; color: var(--ink-2); }
+    input { font: inherit; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--border); background: var(--page); color: var(--ink); }
+    input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+    .err { color: var(--critical); font-size: 13.5px; display: none; }
+    button { justify-content: center; padding: 10px; }
+  </style>
+</head>
+<body>
+  <form class="card" method="post" action="/login">
+    <div>
+      <h1>Runs</h1>
+      <div class="sub">Sign in to your running dashboard</div>
+    </div>
+    <div class="err" id="err">Wrong username or password.</div>
+    <label>Username <input name="username" autocomplete="username" required autofocus></label>
+    <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+    <button class="primary" type="submit">Sign in</button>
+  </form>
+  <script>if (location.search.includes("error")) document.getElementById("err").style.display = "block";</script>
+</body>
+</html>

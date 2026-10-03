@@ -1,0 +1,3 @@
+-r requirements.txt
+pytest
+fit-tool==0.9.16

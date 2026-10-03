@@ -1,0 +1,18 @@
+# Dockge stack for scaling-octo-carnival.
+# Put this file and a filled-in .env (see .env.example) in the stack folder.
+services:
+  runs:
+    image: ghcr.io/${GHCR_OWNER:?set GHCR_OWNER in .env}/scaling-octo-carnival:latest
+    # To build on the NAS instead of pulling from GHCR, clone the repo and use:
+    # build: /mnt/<pool>/apps/scaling-octo-carnival
+    container_name: scaling-octo-carnival
+    restart: unless-stopped
+    user: "${PUID:-568}:${PGID:-568}"
+    env_file: .env
+    ports:
+      - "${PORT:-8420}:8000"
+    volumes:
+      # app database + archived copies of every imported .fit file
+      - ${DATA_PATH:?set DATA_PATH in .env}:/data
+      # the Syncthing folder Gadgetbridge exports to; read-only is enough
+      - ${FIT_PATH:?set FIT_PATH in .env}:/watch:ro
