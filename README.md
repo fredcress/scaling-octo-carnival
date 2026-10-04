@@ -19,7 +19,23 @@ Garmin FR265 ──BLE──▶ Gadgetbridge (phone) ──Syncthing──▶ NA
   from your recent volume, longest run and fitness (Daniels VDOT from your best
   efforts). It shows easy, threshold, interval and race paces, says whether the
   goal looks realistic, and marks each session done / missed against your
-  actual runs.
+  actual runs. The plan **adapts**: missed hard sessions are offered a free day
+  later in the week (never next to another hard day; missed easy runs aren't
+  made up), a poor-readiness morning suggests moving or easing a hard session,
+  and on a fresh morning it offers to pull the next hard session forward. Any
+  session can be moved within its week, made easy or skipped, and undone.
+- **Health** (optional, from Gadgetbridge's database export): sleep with
+  stages and score, HRV against your usual range, resting HR, daily steps, and
+  the watch's VO₂max and race predictions. A morning **readiness** check on the
+  dashboard and plan suggests going easy when HRV, sleep or resting HR are off.
+  Set `GADGETBRIDGE_PATH` to the folder Syncthing puts the export in and turn on
+  Gadgetbridge → Settings → Auto export.
+- **Coach note** (optional): a short daily note on the dashboard, written by a
+  model on your own network (Ollama) from the numbers the app computes
+  (readiness, last night, recent runs, today's planned session), plus a
+  **weekly review** of the last Monday–Sunday each week. Set
+  `OLLAMA_URL` and `OLLAMA_MODEL`; Ollama must listen beyond localhost
+  (`OLLAMA_HOST=0.0.0.0`).
 - **Activity page**: OpenStreetMap route, pace / HR / elevation / cadence /
   power charts, time in HR zones, km splits, laps, best efforts with PR badges,
   Garmin training effect.

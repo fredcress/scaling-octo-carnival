@@ -87,6 +87,27 @@ def test_push_without_strava(authed):
     assert r.status_code == 400
 
 
+def test_fit_download(authed):
+    aid = authed.get("/api/activities?kind=run").json()[0]["id"]
+    r = authed.get(f"/api/activities/{aid}/fit")
+    assert r.status_code == 200 and r.content[8:12] == b".FIT"
+    assert ".fit" in r.headers["content-disposition"]
+    assert authed.get("/api/activities/99999/fit").status_code == 404
+
+
+def test_mark_on_strava_by_hand(authed):
+    aid = authed.get("/api/activities").json()[0]["id"]
+    before = authed.get("/api/summary").json()["unsent"]
+    url = f"/api/activities/{aid}/strava/manual"
+    assert authed.post(url).status_code == 403  # no X-Requested-With
+    assert authed.post(url, headers=H).json() == {"strava_status": "manual"}
+    assert authed.get(f"/api/activities/{aid}/strava").json()["strava_status"] == "manual"
+    assert authed.get("/api/summary").json()["unsent"] == before - 1
+    assert authed.delete(url, headers=H).json() == {"strava_status": "none"}
+    assert authed.delete(url, headers=H).status_code == 409
+    assert authed.get("/api/summary").json()["unsent"] == before
+
+
 def test_plan_lifecycle(authed):
     from datetime import date, timedelta
     r = authed.get("/api/plan").json()
@@ -105,6 +126,31 @@ def test_plan_lifecycle(authed):
     for bad in ({"race_date": date.today().isoformat()}, {"distance_m": 15000},
                 {"goal_time_s": 600}, {"runs_per_week": 7}):
         assert authed.post("/api/plan", json=body | bad, headers=H).status_code in (400, 422), bad
+
+    # adjust: move a week-2 session onto another day of that week, then undo
+    wk = p["weeks"][1]
+    first = wk["sessions"][0]
+    other_day = next(d for d in (date.fromisoformat(wk["start"]) + timedelta(days=i) for i in range(7))
+                     if d.isoformat() != first["date"]).isoformat()
+    r = authed.post("/api/plan/adjust", headers=H,
+                    json={"session": first["id"], "action": "move", "to": other_day}).json()
+    moved = next(s for w in r["plan"]["weeks"] for s in w["sessions"] if s["id"] == first["id"])
+    assert moved["date"] == other_day and moved["moved_from"] == first["date"]
+    r = authed.post("/api/plan/adjust", headers=H, json={"session": first["id"], "action": "reset"}).json()
+    assert r["plan"]["overrides"] == {}
+    r = authed.post("/api/plan/adjust", headers=H, json={"session": first["id"], "action": "skip"}).json()
+    assert next(s for w in r["plan"]["weeks"] for s in w["sessions"] if s["id"] == first["id"])["status"] == "skipped"
+    assert authed.post("/api/plan/adjust", headers=H,
+                       json={"session": first["id"], "action": "move", "to": "2020-01-01"}).status_code == 400
+    assert authed.post("/api/plan", json=body, headers=H).json()["plan"]["overrides"] == {}  # rebuild clears
+
+    aid = authed.get("/api/activities?kind=run").json()[0]["id"]
+    assert authed.post("/api/plan/run-kind", headers=H, json={"activity_id": aid, "kind": "fast"}).status_code == 400
+    assert authed.post("/api/plan/run-kind", headers=H, json={"activity_id": aid, "kind": "long"}).status_code == 200
+    from app.db import kv_get
+    assert kv_get("run_kinds") == {str(aid): "long"}
+    authed.post("/api/plan/run-kind", headers=H, json={"activity_id": aid, "kind": None})
+    assert kv_get("run_kinds") == {}
 
     assert authed.delete("/api/plan").status_code == 403
     assert authed.delete("/api/plan", headers=H).json()["plan"] is None

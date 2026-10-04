@@ -76,6 +76,25 @@ CREATE TABLE IF NOT EXISTS seen_files (
     seen_at   TEXT DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS health_daily (
+    date        TEXT PRIMARY KEY,
+    steps       INTEGER,
+    resting_hr  REAL,
+    sleep_start TEXT,
+    sleep_end   TEXT,
+    sleep_s     INTEGER,
+    deep_s      INTEGER,
+    light_s     INTEGER,
+    rem_s       INTEGER,
+    awake_s     INTEGER,
+    sleep_score INTEGER,
+    hrv_night   INTEGER,
+    hrv_weekly  INTEGER,
+    hrv_low     INTEGER,
+    hrv_high    INTEGER,
+    hrv_status  INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS kv (
     key   TEXT PRIMARY KEY,
     value TEXT

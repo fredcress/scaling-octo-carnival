@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import analytics as an
-from . import plan, queries, strava, watcher
+from . import adapt, coach, health, plan, queries, strava, watcher
 from .config import settings
 from .db import connect, init_db, kv_delete, kv_get, kv_set
 from .fitimport import reprocess
@@ -140,6 +140,45 @@ def api_strava_push(activity_id: int, background: BackgroundTasks):
     return {"strava_status": "uploading"}
 
 
+@app.get("/api/activities/{activity_id}/fit", dependencies=[api])
+def api_fit_download(activity_id: int):
+    with connect() as conn:
+        r = conn.execute("SELECT stored_path, file_name FROM activities WHERE id = ?",
+                         (activity_id,)).fetchone()
+    if not r:
+        raise HTTPException(404, "activity not found")
+    path = Path(r["stored_path"] or "")
+    if not path.is_file():
+        raise HTTPException(404, "the stored .fit file is missing")
+    return FileResponse(path, media_type="application/vnd.ant.fit",
+                        filename=r["file_name"] or f"activity-{activity_id}.fit")
+
+
+@app.post("/api/activities/{activity_id}/strava/manual", dependencies=[api])
+def api_strava_mark_manual(activity_id: int):
+    """Record an upload done by hand on strava.com, for accounts without API access."""
+    with connect() as conn:
+        r = conn.execute("SELECT strava_status FROM activities WHERE id = ?",
+                         (activity_id,)).fetchone()
+        if not r:
+            raise HTTPException(404, "activity not found")
+        if r["strava_status"] in ("uploading", "done", "duplicate"):
+            raise HTTPException(409, f"already {r['strava_status']}")
+        conn.execute("UPDATE activities SET strava_status = 'manual', strava_error = NULL "
+                     "WHERE id = ?", (activity_id,))
+    return {"strava_status": "manual"}
+
+
+@app.delete("/api/activities/{activity_id}/strava/manual", dependencies=[api])
+def api_strava_unmark_manual(activity_id: int):
+    with connect() as conn:
+        cur = conn.execute("UPDATE activities SET strava_status = 'none' "
+                           "WHERE id = ? AND strava_status = 'manual'", (activity_id,))
+        if not cur.rowcount:
+            raise HTTPException(409, "not marked as uploaded by hand")
+    return {"strava_status": "none"}
+
+
 @app.get("/api/trends", dependencies=[api])
 def api_trends():
     return queries.trends()
@@ -186,13 +225,105 @@ def api_plan_save(body: PlanIn):
     # saving (re)builds from today and from current fitness, so paces stay honest
     kv_set("plan", {**body.model_dump(mode="json"), "start_date": t.isoformat(),
                     "baseline": queries.plan_baseline()})
+    kv_delete("plan_overrides")  # adjustments belonged to the old schedule
     return _plan_response()
 
 
 @app.delete("/api/plan", dependencies=[api])
 def api_plan_delete():
     kv_delete("plan")
+    kv_delete("plan_overrides")
     return _plan_response()
+
+
+class RunKindIn(BaseModel):
+    activity_id: int
+    kind: str | None  # easy | quality | long, or null to let the app decide again
+
+
+@app.post("/api/plan/run-kind", dependencies=[api])
+def api_plan_run_kind(body: RunKindIn):
+    """Correct how a run was counted (a hot day can make an easy run look hard)."""
+    if body.kind not in (None, "easy", "quality", "long"):
+        raise HTTPException(400, "kind must be easy, quality, long or null")
+    kinds = kv_get("run_kinds") or {}
+    if body.kind:
+        kinds[str(body.activity_id)] = body.kind
+    else:
+        kinds.pop(str(body.activity_id), None)
+    kv_set("run_kinds", kinds)
+    return _plan_response()
+
+
+class AdjustIn(BaseModel):
+    session: str  # the session's original date, as in the plan's "id"
+    action: str   # move | easy | skip | reset
+    to: date | None = None
+
+
+@app.post("/api/plan/adjust", dependencies=[api])
+def api_plan_adjust(body: AdjustIn):
+    cfg = kv_get("plan")
+    if not cfg:
+        raise HTTPException(404, "no training plan")
+    weeks = queries.plan_view(cfg)["weeks"]
+    s = next((x for w in weeks for x in w["sessions"] if x["id"] == body.session), None)
+    if not s:
+        raise HTTPException(404, "no such session")
+    overrides = kv_get("plan_overrides") or {}
+    warnings = []
+    try:
+        if body.action == "move":
+            if not body.to:
+                raise ValueError("missing target day")
+            overrides, warnings = adapt.move(weeks, overrides, s["id"], body.to.isoformat(), queries.today())
+        elif body.action in ("easy", "skip"):
+            if s["status"] == "done":
+                raise ValueError("that session is already done")
+            overrides.setdefault(s["id"], {})[body.action] = True
+        elif body.action == "reset":
+            if s.get("moved_from") and s["id"] >= queries.today().isoformat():
+                overrides, _ = adapt.move(weeks, overrides, s["id"], s["id"], queries.today())
+            o = overrides.get(s["id"], {})
+            for k in ("easy", "skip") + (("date",) if s["id"] < queries.today().isoformat() else ()):
+                o.pop(k, None)
+            if not o:
+                overrides.pop(s["id"], None)
+        else:
+            raise ValueError("unknown action")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    kv_set("plan_overrides", overrides)
+    return {**_plan_response(), "warnings": warnings}
+
+
+@app.get("/api/health", dependencies=[api])
+def api_health():
+    return queries.health()
+
+
+@app.post("/api/health/import", dependencies=[api])
+def api_health_import():
+    status = health.import_once(force=True)
+    if status is None:
+        raise HTTPException(404, f"no Gadgetbridge export (.db) found in {settings.gadgetbridge_dir}")
+    return status
+
+
+@app.get("/api/coach", dependencies=[api])
+def api_coach():
+    return coach.state()
+
+
+@app.post("/api/coach/refresh", dependencies=[api])
+def api_coach_refresh(what: str = "note"):
+    if not settings.coach_configured:
+        raise HTTPException(400, "set OLLAMA_URL and OLLAMA_MODEL in .env to enable the coach note")
+    if what not in ("note", "review"):
+        raise HTTPException(400, "what must be note or review")
+    if not coach.generate_in_background(force=True, what=("review",) if what == "review" else ("note", "review")):
+        raise HTTPException(409, "already writing a note")
+    return coach.state()
 
 
 @app.get("/api/settings", dependencies=[api])
@@ -208,6 +339,10 @@ def api_settings():
         "zone_limits": an.hr_zone_limits(settings.max_hr, settings.resting_hr),
         "strava": strava.status(),
         "last_scan": kv_get("last_scan"),
+        "gadgetbridge_dir": str(settings.gadgetbridge_dir),
+        "gadgetbridge_dir_exists": settings.gadgetbridge_dir.is_dir(),
+        "health_import": kv_get("health_import"),
+        "coach": coach.state(),
         "reprocess": kv_get("reprocess"),
         "import_log": queries.import_log(),
     }

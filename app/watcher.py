@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import coach, health
 from .config import settings
 from .db import connect, kv_set
 from .fitimport import import_file
@@ -68,6 +69,14 @@ def run_forever() -> None:
             scan_once()
         except Exception:
             log.exception("scan failed")
+        try:
+            health.import_once()
+        except Exception:
+            log.exception("health import failed")
+        try:
+            coach.generate_in_background()  # no-op unless the facts changed
+        except Exception:
+            log.exception("coach failed")
         _wake.wait(settings.scan_interval)
         _wake.clear()
 

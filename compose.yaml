@@ -16,3 +16,5 @@ services:
       - ${DATA_PATH:?set DATA_PATH in .env}:/data
       # the Syncthing folder Gadgetbridge exports to; read-only is enough
       - ${FIT_PATH:?set FIT_PATH in .env}:/watch:ro
+      # optional: the folder Gadgetbridge's database export is synced to (sleep, HRV, steps)
+      - ${GADGETBRIDGE_PATH:-./no-gadgetbridge}:/gadgetbridge:ro

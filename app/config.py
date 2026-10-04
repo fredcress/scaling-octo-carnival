@@ -19,6 +19,7 @@ class Settings:
     secret_key: str
     https_only: bool
     watch_dir: Path
+    gadgetbridge_dir: Path
     data_dir: Path
     scan_interval: int
     max_hr: float
@@ -29,6 +30,12 @@ class Settings:
     strava_client_id: str
     strava_client_secret: str
     strava_refresh_token: str
+    ollama_url: str = ""
+    ollama_model: str = ""
+
+    @property
+    def coach_configured(self) -> bool:
+        return bool(self.ollama_url and self.ollama_model)
 
     @property
     def db_path(self) -> Path:
@@ -68,6 +75,7 @@ def load_settings() -> Settings:
         secret_key=_secret_key(data_dir),
         https_only=os.environ.get("SESSION_HTTPS_ONLY", "false").lower() in ("1", "true", "yes"),
         watch_dir=Path(os.environ.get("WATCH_DIR", "/watch")),
+        gadgetbridge_dir=Path(os.environ.get("GADGETBRIDGE_DIR", "/gadgetbridge")),
         data_dir=data_dir,
         scan_interval=max(10, int(_float("SCAN_INTERVAL", 60))),
         max_hr=_float("MAX_HR", 190),
@@ -78,6 +86,8 @@ def load_settings() -> Settings:
         strava_client_id=os.environ.get("STRAVA_CLIENT_ID", "").strip(),
         strava_client_secret=os.environ.get("STRAVA_CLIENT_SECRET", "").strip(),
         strava_refresh_token=os.environ.get("STRAVA_REFRESH_TOKEN", "").strip(),
+        ollama_url=os.environ.get("OLLAMA_URL", "").strip().rstrip("/"),
+        ollama_model=os.environ.get("OLLAMA_MODEL", "").strip(),
     )
 
 

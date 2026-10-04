@@ -168,6 +168,8 @@ button.primary, .btn.primary { background: var(--accent); color: var(--accent-in
 button.strava, .btn.strava { background: var(--strava); color: #fff; border-color: transparent; }
 button.strava:hover, .btn.strava:hover { filter: brightness(1.06); background: var(--strava); }
 button.small, .btn.small { font-size: 12.5px; padding: 4px 9px; border-radius: 7px; }
+.btn.icon, button.icon { padding: 4px 6px; }
+.strava-cell, .head-actions { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .seg button { border: none; border-radius: 0; padding: 6px 12px; color: var(--ink-2); }
 .seg button.on { background: var(--surface-2); color: var(--ink); }
@@ -197,7 +199,7 @@ button.small, .btn.small { font-size: 12.5px; padding: 4px 9px; border-radius: 7
 .notice.ok svg { color: var(--good); }
 dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; margin: 0; font-size: 14px; }
 dl.kv dt { color: var(--ink-2); }
-dl.kv dd { margin: 0; }
+dl.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .loading { color: var(--muted); padding: 40px 0; }
 .notice.warn svg { color: var(--warning); }
 
@@ -233,6 +235,32 @@ dl.kv dd { margin: 0; }
 .phase { font-size: 12.5px; padding: 1px 8px; border-radius: 99px; background: var(--surface-2); color: var(--ink-2); }
 .phase.ph-peak, .phase.ph-race { color: var(--ink); font-weight: 550; }
 dl.kv.paces { row-gap: 10px; }
+.row-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+select.adjust {
+  font: inherit; font-size: 12.5px; color: var(--ink-2); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 7px; padding: 3px 6px; max-width: 150px;
+}
+.pill.moved { font-size: 11.5px; padding: 1px 7px; }
+.plan-table tr.is-skipped .act-name, .plan-table tr.is-skipped .sub { text-decoration: line-through; color: var(--muted); }
+.suggestion {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  padding: 10px 12px; margin-bottom: 10px; border-radius: 8px; background: var(--surface-2); font-size: 14px;
+}
+.suggestion > svg { width: 16px; height: 16px; flex: none; color: var(--accent); }
+.suggestion > span:first-of-type { flex: 1 1 260px; }
+.run-done { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.run-done + .run-done { margin-top: 6px; }
+select.kind {
+  font: inherit; font-size: 11.5px; color: var(--muted); background: transparent;
+  border: none; padding: 0; cursor: pointer; text-align: right;
+}
+select.kind:hover { color: var(--ink-2); }
+
+/* ---------------------------------------------------------------- health */
+.readiness p { margin: 0 0 6px; }
+.coach-text { margin: 0 0 8px; font-size: 15px; line-height: 1.55; }
+.coach-meta { display: inline-flex; gap: 6px; align-items: center; }
+.readiness .flags { margin: 4px 0 0; padding-left: 18px; color: var(--ink-2); font-size: 14px; }
 .toast { position: fixed; bottom: 20px; right: 20px; background: var(--ink); color: var(--page); padding: 10px 16px; border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 2000; }
 .toast.show { opacity: 1; }
 
@@ -245,7 +273,9 @@ dl.kv.paces { row-gap: 10px; }
     border-right: none; border-top: 1px solid var(--border);
   }
   .brand, .nav .spacer, .nav .logout { display: none; }
-  .nav a { flex-direction: column; gap: 2px; font-size: 10.5px; padding: 6px 4px; }
+  .nav a { flex-direction: column; gap: 2px; font-size: 10.5px; padding: 6px 4px; flex: 1 0 58px; }
+  .nav { overflow-x: auto; scrollbar-width: none; justify-content: flex-start; }
+  .nav::-webkit-scrollbar { display: none; }
   main { padding: 16px 16px 96px; }
   .cols-2, .cols-3 { grid-template-columns: 1fr; }
   .hero-value { font-size: 44px; }

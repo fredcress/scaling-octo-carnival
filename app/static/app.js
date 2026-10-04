@@ -82,6 +82,8 @@ const icons = {
   upload: I('<path d="M12 16V4M6 10l6-6 6 6M4 20h16"/>'),
   star: I('<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z" fill="currentColor"/>'),
   refresh: I('<path d="M21 12a9 9 0 1 1-2.6-6.4L21 8M21 3v5h-5"/>'),
+  heart: I('<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21l7.8-7.5 1-1.1a5.5 5.5 0 0 0 0-7.8z"/>'),
+  download: I('<path d="M12 4v12M6 10l6 6 6-6M4 20h16"/>'),
   flag: I('<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>'),
 };
 const sportIcon = (sport) =>
@@ -92,6 +94,7 @@ const sportIcon = (sport) =>
 const NAV = [
   ["#/", "Dashboard", icons.dash],
   ["#/plan", "Plan", icons.flag],
+  ["#/health", "Health", icons.heart],
   ["#/activities", "Activities", icons.list],
   ["#/trends", "Trends", icons.trend],
   ["#/records", "Records", icons.trophy],
@@ -115,6 +118,7 @@ function cleanup() {
 const routes = [
   [/^#\/?$/, renderDashboard],
   [/^#\/plan$/, renderPlan],
+  [/^#\/health$/, renderHealth],
   [/^#\/activities$/, renderActivities],
   [/^#\/activity\/(\d+)$/, renderActivity],
   [/^#\/trends$/, renderTrends],
@@ -247,12 +251,43 @@ function stravaCell(a, { big = false } = {}) {
       return `<a class="pill" href="https://www.strava.com/activities/${a.strava_activity_id}" target="_blank" rel="noopener" title="Strava already had this activity">${icons.check} Already on Strava</a>`;
     case "uploading":
       return `<span class="pill" data-strava-wait="${a.id}">${icons.upload} Uploading…</span>`;
+    case "manual":
+      return `<span class="strava-cell"><span class="pill good" title="Uploaded by hand on strava.com">${icons.check} On Strava</span>${big
+        ? `<button class="small" data-strava-unmark="${a.id}">Undo</button>` : ""}</span>`;
     case "error":
-      return `<button class="strava ${cls}" data-strava="${a.id}" title="${esc(a.strava_error)}">${icons.refresh} Retry Strava</button>`;
+      return `<span class="strava-cell"><button class="strava ${cls}" data-strava="${a.id}" title="${esc(a.strava_error)}">${icons.refresh} Retry Strava</button>${markButton(a, big)}</span>`;
     default:
-      return `<button class="strava ${cls}" data-strava="${a.id}">${icons.upload} Push to Strava</button>`;
+      return `<span class="strava-cell"><button class="strava ${cls}" data-strava="${a.id}">${icons.upload} Push to Strava</button>${markButton(a, big)}</span>`;
   }
 }
+
+/* for Strava accounts without API access: upload the .fit on strava.com, then tick it off here */
+const markButton = (a, big) => big
+  ? `<button data-strava-mark="${a.id}">${icons.check} Mark as on Strava</button>`
+  : `<button class="small icon" data-strava-mark="${a.id}" title="Mark as on Strava (uploaded by hand)">${icons.check}</button>`;
+
+const fitLink = (a, big = false) => big
+  ? `<a class="btn" href="/api/activities/${a.id}/fit" download>${icons.download} Download .fit</a>`
+  : `<a class="btn small icon" href="/api/activities/${a.id}/fit" download title="Download .fit">${icons.download}</a>`;
+
+document.addEventListener("click", async (ev) => {
+  const btn = ev.target.closest("[data-strava-mark], [data-strava-unmark]");
+  if (!btn) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  const mark = "stravaMark" in btn.dataset;
+  const id = mark ? btn.dataset.stravaMark : btn.dataset.stravaUnmark;
+  const cell = btn.closest(".strava-cell");
+  const big = !!btn.closest(".head-actions");
+  btn.disabled = true;
+  try {
+    const s = await api(`/api/activities/${id}/strava/manual`, { method: mark ? "POST" : "DELETE" });
+    cell.outerHTML = stravaCell({ id, ...s }, { big });
+  } catch (e) {
+    btn.disabled = false;
+    toast(e.message);
+  }
+});
 
 /* one delegated handler for every Push to Strava button on any page */
 document.addEventListener("click", async (ev) => {
@@ -264,7 +299,7 @@ document.addEventListener("click", async (ev) => {
   btn.disabled = true;
   try {
     await api(`/api/activities/${id}/strava`, { method: "POST" });
-    btn.outerHTML = stravaCell({ id, strava_status: "uploading" }, { big: !btn.classList.contains("small") });
+    (btn.closest(".strava-cell") || btn).outerHTML = stravaCell({ id, strava_status: "uploading" }, { big: !btn.classList.contains("small") });
     watchUploads();
   } catch (e) {
     btn.disabled = false;
@@ -304,13 +339,14 @@ function activityRows(list) {
       <td class="r">${fmt.int(a.avg_hr)}</td>
       <td class="r" title="${a.trimp_estimated ? "Estimated (no heart rate)" : "TRIMP"}">${fmt.int(a.trimp)}${a.trimp_estimated ? "*" : ""}</td>
       <td>${stravaCell(a)}</td>
+      <td>${fitLink(a)}</td>
     </tr>`).join("");
 }
 
 const activityTable = (list) => `
   <div class="table-wrap"><table>
     <thead><tr><th>Date</th><th>Activity</th><th class="r">Distance</th><th class="r">Time</th>
-      <th class="r">Pace / speed</th><th class="r">Avg HR</th><th class="r">Load</th><th>Strava</th></tr></thead>
+      <th class="r">Pace / speed</th><th class="r">Avg HR</th><th class="r">Load</th><th>Strava</th><th></th></tr></thead>
     <tbody>${activityRows(list)}</tbody>
   </table></div>`;
 
@@ -375,6 +411,8 @@ async function renderDashboard() {
       </div>
     </div>
 
+    ${readinessCard(s.readiness, { compact: true })}
+    <div id="coach-slot"></div>
     <div class="tiles">
       <div class="card tile"><div class="label">Fitness</div><div class="value">${fmt.int(cur.ctl)}</div><div class="delta">42-day load average</div></div>
       <div class="card tile"><div class="label">Fatigue</div><div class="value">${fmt.int(cur.atl)}</div><div class="delta">7-day load average</div></div>
@@ -452,6 +490,200 @@ async function renderDashboard() {
     options: baseOptions(t, { xFmt: fmt.weekLabel }),
   });
   watchUploads();
+  mountCoach().catch(() => {});
+}
+
+/* ================================================================ health */
+
+const READINESS = {
+  good: ["good", icons.check, "Recovered"],
+  ok: ["", icons.alert, "Slightly under par"],
+  low: ["err", icons.alert, "Not well recovered"],
+};
+
+function readinessCard(r, { compact = false } = {}) {
+  if (!r) return "";
+  const [cls, ic, label] = READINESS[r.level];
+  const why = r.flags.length ? `<ul class="flags">${r.flags.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>`
+    : `<p class="sub">HRV, sleep and resting HR all look normal.</p>`;
+  return `<div class="card readiness">
+    <div class="card-head"><h2>Readiness</h2><span class="pill ${cls}">${ic} ${label}</span></div>
+    <p>${esc(r.advice)}</p>${r.context ? `<p class="sub">${esc(r.context)}</p>` : ""}${compact && !r.flags.length ? "" : why}
+  </div>`;
+}
+
+/* ---- coach note: written by the local LLM in the background, polled until ready */
+
+function coachCard(c) {
+  if (!c.configured) return "";
+  const n = c.note;
+  const body = n ? `<p class="coach-text">${esc(n.text).replace(/\n+/g, "<br>")}</p>`
+    : c.writing ? `<p class="sub">Writing today's note…</p>`
+    : c.status && !c.status.ok ? `<p class="sub">${icons.alert} Couldn't reach the model: ${esc(c.status.error)}</p>`
+    : `<p class="sub">No note yet today.</p>`;
+  return `<div class="card coach">
+    <div class="card-head"><h2>Coach note</h2>
+      <span class="coach-meta"><span class="pill" title="Written by ${esc(c.model)} from the numbers on this page">AI · ${esc(c.model)}</span>
+      <button class="small icon" id="coach-refresh" title="Write a new note" ${c.writing ? "disabled" : ""}>${icons.refresh}</button></span></div>
+    ${body}
+    ${n ? `<div class="sub">${fmt.dateTime(n.at)} · ${n.seconds}s · check anything important against the numbers</div>` : ""}
+  </div>${reviewCard(c)}`;
+}
+
+function reviewCard(c) {
+  const r = c.review;
+  if (!r) return "";
+  const [from, to] = r.week.split(" to ");
+  return `<div class="card coach">
+    <div class="card-head"><h2>Last week in review</h2>
+      <span class="coach-meta"><span class="sub">${fmt.date(from, { day: "numeric", month: "short" })} – ${fmt.date(to, { day: "numeric", month: "short" })}</span>
+      <span class="pill" title="Written by ${esc(r.model)} from your runs, plan and health data">AI · ${esc(r.model)}</span>
+      <button class="small icon" id="review-refresh" title="Rewrite the review" ${c.writing ? "disabled" : ""}>${icons.refresh}</button></span></div>
+    ${r.text.split(/\n\s*\n/).map((para) => `<p class="coach-text">${esc(para).replace(/\n/g, "<br>")}</p>`).join("")}
+  </div>`;
+}
+
+async function mountCoach() {
+  const slot = $("#coach-slot");
+  if (!slot) return;
+  const draw = (c) => {
+    slot.innerHTML = coachCard(c);
+    for (const [id, what] of [["#coach-refresh", "note"], ["#review-refresh", "review"]]) {
+      const b = $(id);
+      if (b) b.onclick = async () => {
+        b.disabled = true;
+        try { draw(await api(`/api/coach/refresh?what=${what}`, { method: "POST" })); poll(); }
+        catch (e) { toast(e.message); b.disabled = false; }
+      };
+    }
+  };
+  const poll = () => {
+    const h = setInterval(async () => {
+      if (!document.body.contains(slot)) { clearInterval(h); return; }
+      const c = await api("/api/coach").catch(() => null);
+      if (c && !c.writing) { clearInterval(h); draw(c); }
+    }, 4000);
+    timers.push(h);
+  };
+  const c = await api("/api/coach");
+  draw(c);
+  if (c.writing) poll();
+}
+
+const hm = (s) => s == null ? "–" : `${Math.floor(s / 3600)}h${String(Math.floor(s % 3600 / 60)).padStart(2, "0")}`;
+
+async function renderHealth() {
+  const d = await api("/api/health");
+  const imp = d.import;
+  const head = `<div class="page-head">
+    <div><h1>Health</h1><div class="sub">${imp ? `From Gadgetbridge · exported ${fmt.dateTime(imp.exported_at)}` : "From Gadgetbridge's database export"}</div></div>
+    ${d.configured ? `<button id="gb-import">${icons.refresh} Re-import</button>` : ""}</div>`;
+  if (!d.days.length) {
+    view.innerHTML = `${head}<div class="card empty"><h2>No health data yet</h2>
+      <p>In Gadgetbridge, turn on <strong>Settings → Auto export</strong> and sync the export folder to the NAS with Syncthing.<br>
+      Then set <code>GADGETBRIDGE_PATH</code> in <code>.env</code> to that folder and update the stack.</p>
+      ${d.configured ? `<p class="sub">The folder is mounted but no <code>.db</code> export was found in it yet.</p>` : ""}</div>`;
+    bindImport();
+    return;
+  }
+  const days = d.days, last = (key) => [...days].reverse().find((x) => x[key] != null);
+  const avg = (key, n) => { const v = days.slice(-n).map((x) => x[key]).filter((x) => x != null); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+  const night = last("sleep_s"), hrv = last("hrv_night"), rhr = last("resting_hr"), steps = last("steps");
+  const w = d.watch || {};
+  const ago = (x) => x && x.date !== d.today ? ` · ${fmt.date(x.date, { day: "numeric", month: "short" })}` : "";
+
+  view.innerHTML = `${head}
+    ${d.readiness ? readinessCard(d.readiness) : `<div class="notice">${icons.alert}No data for last night yet. It appears after Gadgetbridge's next export.</div>`}
+    <div class="tiles">
+      <div class="card tile"><div class="label">Sleep${ago(night)}</div><div class="value">${hm(night && night.sleep_s)}</div>
+        <div class="delta">${night && night.sleep_score != null ? `score ${night.sleep_score} · ` : ""}7-day avg ${hm(avg("sleep_s", 7))}</div></div>
+      <div class="card tile"><div class="label">HRV, last night${ago(hrv)}</div><div class="value">${hrv ? hrv.hrv_night : "–"}<small>ms</small></div>
+        <div class="delta">${hrv ? `usual ${hrv.hrv_low}–${hrv.hrv_high}${hrv.hrv_status_label ? ` · 7-day trend ${hrv.hrv_status_label}` : ""}` : ""}</div></div>
+      <div class="card tile"><div class="label">Resting HR${ago(rhr)}</div><div class="value">${rhr ? Math.round(rhr.resting_hr) : "–"}<small>bpm</small></div>
+        <div class="delta">30-day avg ${fmt.int(avg("resting_hr", 30))}</div></div>
+      <div class="card tile"><div class="label">Steps${ago(steps)}</div><div class="value">${fmt.int(steps && steps.steps)}</div>
+        <div class="delta">7-day avg ${fmt.int(avg("steps", 7))}</div></div>
+      ${w.vo2max ? `<div class="card tile"><div class="label">VO₂max (watch)</div><div class="value">${w.vo2max.value}</div><div class="delta">as of ${fmt.date(w.vo2max.date)}</div></div>` : ""}
+    </div>
+    <div class="grid cols-2">
+      <div class="card">
+        <div class="card-head"><h2>Sleep</h2><div class="legend">
+          <span><i class="key" style="background:var(--z5)"></i>Deep</span><span><i class="key" style="background:var(--z3)"></i>REM</span>
+          <span><i class="key" style="background:var(--z1)"></i>Light</span></div></div>
+        <div class="chart"><canvas id="c-sleep"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>HRV</h2><div class="legend">
+          <span><i class="key" style="background:var(--muted);border-radius:50%"></i>Night</span>
+          <span><i class="key line" style="background:var(--series-1)"></i>7-day avg</span>
+          <span><i class="key planned"></i>Usual range</span></div></div>
+        <div class="chart"><canvas id="c-hrv"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Resting heart rate</h2><span class="sub">bpm</span></div>
+        <div class="chart"><canvas id="c-rhr"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Steps</h2><span class="sub">per day</span></div>
+        <div class="chart"><canvas id="c-steps"></canvas></div>
+      </div>
+    </div>
+    ${w.predictions ? `<div class="card">
+      <div class="card-head"><h2>Race predictions (watch)</h2><span class="sub">Garmin's estimate, compare with <a href="#/records">Records</a></span></div>
+      <div class="tiles">${RACES.map(([m, l]) => { const p = w.predictions[String(m)]; return p ? `<div class="tile"><div class="label">${l}</div>
+        <div class="value">${fmt.dur(p.time_s)}</div><div class="delta">${fmt.pace(p.time_s / m * 1000)} /km</div></div>` : ""; }).join("")}</div>
+    </div>` : ""}`;
+  bindImport();
+
+  const t = chartTheme();
+  const labels = days.map((x) => x.date);
+  const dayTitle = (it) => fmt.date(labels[it[0].dataIndex], { weekday: "short", day: "numeric", month: "short" });
+  const opts = (extra = {}) => { const o = baseOptions(t, { xFmt: fmt.weekLabel, ...extra }); o.plugins.tooltip.callbacks = { title: dayTitle }; return o; };
+
+  const so = opts({ stacked: true, yFmt: (v) => v + "h" });
+  so.plugins.tooltip.callbacks.label = (it) => ` ${it.dataset.label}: ${hm(it.parsed.y * 3600)}`;
+  so.plugins.tooltip.callbacks.footer = (it) => { const x = days[it[0].dataIndex]; return x.sleep_s ? `Asleep ${hm(x.sleep_s)}${x.sleep_score != null ? ` · score ${x.sleep_score}` : ""}` : ""; };
+  makeChart("c-sleep", {
+    type: "bar",
+    data: { labels, datasets: [["Deep", "deep_s", "--z5"], ["REM", "rem_s", "--z3"], ["Light", "light_s", "--z1"]].map(([l, k, c], i) => ({
+      label: l, data: days.map((x) => x[k] != null ? +(x[k] / 3600).toFixed(2) : null),
+      backgroundColor: css(c), hoverBackgroundColor: css(c), borderColor: t.surface, borderWidth: { top: 1, bottom: 0, left: 0, right: 0 },
+      maxBarThickness: 14, borderSkipped: "start", borderRadius: i === 2 ? { topLeft: 3, topRight: 3 } : 0,
+    })) },
+    options: so,
+  });
+
+  const ho = opts({ yFmt: (v) => v });
+  ho.plugins.tooltip.filter = (it) => it.datasetIndex >= 2;
+  ho.plugins.tooltip.callbacks.label = (it) => ` ${it.dataset.label}: ${Math.round(it.parsed.y)} ms`;
+  makeChart("c-hrv", {
+    type: "line",
+    data: { labels, datasets: [
+      { label: "Usual low", data: days.map((x) => x.hrv_low), borderWidth: 0, pointRadius: 0, spanGaps: true, fill: false },
+      { label: "Usual high", data: days.map((x) => x.hrv_high), borderWidth: 0, pointRadius: 0, spanGaps: true, fill: "-1", backgroundColor: alpha(t.muted, 0.18) },
+      { label: "Night", data: days.map((x) => x.hrv_night), showLine: false, pointRadius: 2.5, pointHoverRadius: 5, backgroundColor: alpha(t.muted, 0.7), borderColor: alpha(t.muted, 0.7) },
+      { label: "7-day avg", data: days.map((x) => x.hrv_weekly), ...lineStyle(t.s1) },
+    ] },
+    options: ho,
+  });
+
+  const ro = opts();
+  ro.plugins.tooltip.callbacks.label = (it) => ` ${Math.round(it.parsed.y)} bpm`;
+  makeChart("c-rhr", { type: "line", data: { labels, datasets: [{ label: "Resting HR", data: days.map((x) => x.resting_hr), ...lineStyle(t.s2) }] }, options: ro });
+
+  const sto = opts({ yFmt: (v) => v >= 1000 ? v / 1000 + "k" : v });
+  sto.plugins.tooltip.callbacks.label = (it) => ` ${fmt.int(it.parsed.y)} steps`;
+  makeChart("c-steps", { type: "bar", data: { labels, datasets: [{ label: "Steps", data: days.map((x) => x.steps), ...barStyle(t.s1), maxBarThickness: 14 }] }, options: sto });
+}
+
+function bindImport() {
+  const b = $("#gb-import");
+  if (!b) return;
+  b.onclick = async () => {
+    b.disabled = true;
+    try { const r = await api("/api/health/import", { method: "POST" }); toast(`Imported ${r.days} days`); route(); }
+    catch (e) { toast(e.message); b.disabled = false; }
+  };
 }
 
 /* ================================================================ training plan */
@@ -479,27 +711,103 @@ function sessionStatus(s) {
     partial: `<span class="pill">Partly done</span>`,
     missed: `<span class="pill err">Missed</span>`,
     today: `<span class="pill today">Today</span>`,
+    skipped: `<span class="pill">Skipped</span>`,
+    dropped: `<span class="pill" title="${esc(s.note || "")}">Dropped</span>`,
   }[s.status] || "";
 }
 
-function sessionRow(s, today) {
-  const done = s.runs.map((r) => `<a href="#/activity/${r.id}">${fmt.km(r.distance_km * 1000, 1)} km</a>`).join(", ");
-  return `<tr class="${s.date === today ? "is-today" : ""}">
+const weekDays = (start) => [0, 1, 2, 3, 4, 5, 6].map((i) => new Date(new Date(start + "T12:00:00").getTime() + i * 864e5).toISOString().slice(0, 10));
+let planOverrides = {};  // manual adjustments of the plan being shown (only those can be undone)
+
+/* optional planning ahead: "Adjust…" menu for sessions still to come, "Undo" for manual changes */
+function sessionActions(s, week, today) {
+  const undo = planOverrides[s.id] ? `<button class="small" data-undo="${s.id}">Undo</button>` : "";
+  if (!["upcoming", "today"].includes(s.status) || s.type === "race") return undo;
+  const days = weekDays(week.start).filter((d) => d >= today && d !== s.date);
+  const opts = days.map((d) => {
+    const other = week.sessions.find((x) => x.date === d);
+    return `<option value="move:${d}">Move to ${d === today ? "today" : fmt.date(d, { weekday: "long" })}${other ? ` (swap with ${esc(other.title.toLowerCase())})` : ""}</option>`;
+  }).join("");
+  const hard = !["easy", "race"].includes(s.type);
+  return `<select class="adjust" data-adjust="${s.id}" aria-label="Adjust session">
+      <option value="">Adjust…</option>${opts}
+      ${hard && !s.changed ? `<option value="easy">Make it an easy run</option>` : ""}
+      ${!s.skipped ? `<option value="skip">Skip it</option>` : ""}
+    </select>${undo}`;
+}
+
+/* each recorded run, with how the plan counted it; changing it re-plans the week */
+const KIND_LABEL = { easy: "easy", quality: "hard", long: "long", race: "race" };
+function runLink(r) {
+  const opts = ["easy", "quality", "long"].map((k) => `<option value="${k}" ${r.kind_manual && r.kind === k ? "selected" : ""}>counted as ${KIND_LABEL[k]}</option>`).join("");
+  return `<span class="run-done"><a href="#/activity/${r.id}">${fmt.km(r.distance_km * 1000, 1)} km</a>
+    ${r.kind && r.kind !== "race" ? `<select class="kind" data-kind="${r.id}" title="How this run was counted. Change it if it's wrong (a hot day can make an easy run look hard).">
+      <option value="" ${r.kind_manual ? "" : "selected"}>${r.kind_manual ? "let the app decide" : `counted as ${KIND_LABEL[r.kind]}`}</option>${opts}</select>` : ""}</span>`;
+}
+
+function sessionRow(s, today, week) {
+  const done = s.runs.map(runLink).join("");
+  const note = s.status === "dropped" ? s.note : s.moved_from ? `moved from ${fmt.date(s.moved_from, { weekday: "short" })}` : s.changed || "";
+  return `<tr class="${s.date === today ? "is-today" : ""}${s.skipped || s.status === "dropped" ? " is-skipped" : ""}">
     <td class="muted">${fmt.date(s.date, { weekday: "short", day: "numeric", month: "short" })}</td>
     <td class="wrap"><i class="key" style="background:var(${SESSION_COLOR[s.type] || "--z1"})"></i>
-      <span class="act-name">${esc(s.title)}</span><div class="sub">${esc(s.detail)}</div></td>
+      <span class="act-name">${esc(s.title)}</span>${note ? ` <span class="pill moved">${esc(note)}</span>` : ""}<div class="sub">${esc(s.detail)}</div></td>
     <td class="r">${fmt.km(s.distance_km * 1000, 1)} km</td>
     <td class="r">${done ? done : ""}</td>
-    <td>${sessionStatus(s)}</td>
+    <td><div class="row-actions">${sessionStatus(s)}${week ? sessionActions(s, week, today) : ""}</div></td>
   </tr>`;
+}
+
+async function adjustPlan(body) {
+  const r = await api("/api/plan/adjust", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (r.warnings && r.warnings.length) toast(r.warnings.join(" "));
+  route();
+}
+
+document.addEventListener("change", async (ev) => {
+  const sel = ev.target.closest("select[data-adjust]");
+  if (!sel || !sel.value) return;
+  const [action, to] = sel.value.split(":");
+  sel.disabled = true;
+  try { await adjustPlan({ session: sel.dataset.adjust, action, to }); }
+  catch (e) { toast(e.message); sel.disabled = false; sel.value = ""; }
+});
+
+document.addEventListener("change", async (ev) => {
+  const sel = ev.target.closest("select[data-kind]");
+  if (!sel) return;
+  sel.disabled = true;
+  try {
+    await api("/api/plan/run-kind", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ activity_id: +sel.dataset.kind, kind: sel.value || null }) });
+    route();
+  } catch (e) { toast(e.message); sel.disabled = false; }
+});
+
+document.addEventListener("click", async (ev) => {
+  const b = ev.target.closest("[data-undo]");
+  if (!b) return;
+  b.disabled = true;
+  try { await adjustPlan({ session: b.dataset.undo, action: "reset" }); }
+  catch (e) { toast(e.message); b.disabled = false; }
+});
+
+/* what the plan changed by itself this week, and today's readiness tip: information only */
+function planUpdates(week, adviceList) {
+  const changes = (week && week.changes) || [];
+  return [
+    ...(adviceList || []).map((a) => `<div class="suggestion">${icons.heart}<span>${esc(a)}</span></div>`),
+    changes.length ? `<div class="suggestion updated">${icons.refresh}<span><strong>Plan updated from your runs:</strong>
+      ${changes.map((c) => esc(c)).join(". ")}.</span></div>` : "",
+  ].join("");
 }
 
 function weekTable(w, today) {
   const extra = w.extra_runs.map((r) => `<tr><td class="muted">${fmt.date(r.date, { weekday: "short", day: "numeric", month: "short" })}</td>
-    <td class="wrap muted">Extra run · ${esc(r.name)}</td><td></td><td class="r"><a href="#/activity/${r.id}">${fmt.km(r.distance_km * 1000, 1)} km</a></td><td></td></tr>`).join("");
+    <td class="wrap muted">Extra run · ${esc(r.name)}</td><td></td><td class="r">${runLink(r)}</td><td></td></tr>`).join("");
   return `<div class="table-wrap"><table class="plan-table">
     <thead><tr><th>Day</th><th>Session</th><th class="r">Planned</th><th class="r">Done</th><th></th></tr></thead>
-    <tbody>${w.sessions.map((s) => sessionRow(s, today)).join("")}${extra}</tbody></table></div>`;
+    <tbody>${w.sessions.map((s) => sessionRow(s, today, weekDays(w.start)[6] >= today ? w : null)).join("")}${extra}</tbody></table></div>`;
 }
 
 async function renderPlan() {
@@ -507,6 +815,7 @@ async function renderPlan() {
   const editing = new URLSearchParams(location.hash.split("?")[1] || "").has("edit");
   if (!d.plan || editing) return renderPlanForm(d);
   const p = d.plan, c = p.config, today = p.today;
+  const openWeeks = new Set((() => { try { return JSON.parse(sessionStorageGet("open-weeks")) || []; } catch { return []; } })());
   // set up late in the week, the plan starts next Monday: preview its first week
   const upcoming = !p.current_week && !p.finished;
   const cur = p.weeks.find((w) => w.index === p.current_week) || (upcoming ? p.weeks[0] : null);
@@ -525,6 +834,17 @@ async function renderPlan() {
       : "No recent 5 km+ efforts and no goal time, so paces are a cautious guess. Add a goal time or rebuild after a few runs."];
   }
 
+  // today's session vs how recovered the watch says you are
+  const todays = cur && cur.sessions.find((s) => s.date === today && s.status !== "done");
+  const r = p.readiness;
+  // the advice line (in "This week") covers the cases where the plan would change
+  const readinessNote = !todays || !r || (p.advice || []).length ? ""
+    : r.level === "good" ? `<div class="notice ok">${icons.check}Recovered, good to go for today's ${esc(todays.title.toLowerCase())}.</div>`
+    : `<div class="notice ${r.level === "low" ? "err" : "warn"}">${icons.alert}<span>${esc(r.flags.join("; "))}.
+        ${r.context ? esc(r.context) : ""} Keep today's ${esc(todays.title.toLowerCase())} controlled, and back off if it feels harder than it should.</span></div>`;
+  planOverrides = p.overrides || {};
+  const watchPred = p.watch && p.watch.predictions && p.watch.predictions[String(c.distance_m)];
+
   const pc = p.paces;
   const paceRows = [
     ["Easy &amp; long runs", `${fmt.pace(pc.easy[0])}–${fmt.pace(pc.easy[1])}`, "Most of your running. You should be able to talk."],
@@ -539,16 +859,17 @@ async function renderPlan() {
     const rows = WEEKDAYS.map((_, i) => {
       const day = new Date(ws.getTime() + i * 86400000).toISOString().slice(0, 10);
       const s = cur.sessions.find((x) => x.date === day);
-      if (s) return sessionRow(s, today);
+      if (s) return sessionRow(s, today, cur);
       const extra = cur.extra_runs.filter((r) => r.date === day);
       return `<tr class="${day === today ? "is-today" : ""}"><td class="muted">${fmt.date(day, { weekday: "short", day: "numeric", month: "short" })}</td>
         <td class="muted">${extra.length ? `Extra run · ${esc(extra[0].name)}` : "Rest"}</td><td></td>
-        <td class="r">${extra.map((r) => `<a href="#/activity/${r.id}">${fmt.km(r.distance_km * 1000, 1)} km</a>`).join(", ")}</td><td></td></tr>`;
+        <td class="r">${extra.map(runLink).join("")}</td><td></td></tr>`;
     }).join("");
     return `<div class="card">
       <div class="card-head"><h2>${upcoming ? `First week, starting ${fmt.date(cur.start, { weekday: "long", day: "numeric", month: "short" })}` : "This week"} · ${PHASES[cur.phase][0]}${cur.recovery ? " (easier week)" : ""}</h2>
         <span class="sub">${fmt.km(cur.actual_km * 1000)} of ${fmt.km(cur.planned_km * 1000)} km</span></div>
       <p class="sub" style="margin-top:-4px">${PHASES[cur.phase][1]}${cur.recovery ? ". Lighter on purpose so your body absorbs the last three weeks." : "."}</p>
+      ${upcoming ? "" : planUpdates(cur, p.advice)}
       <div class="table-wrap"><table class="plan-table">
         <thead><tr><th>Day</th><th>Session</th><th class="r">Planned</th><th class="r">Done</th><th></th></tr></thead>
         <tbody>${rows}</tbody></table></div>
@@ -563,13 +884,14 @@ async function renderPlan() {
     </div>
     ${p.finished ? `<div class="notice ok">${icons.check}Race day has passed. Hope it went well! <a href="#/plan?edit=1" style="margin-left:6px">Set up the next one</a></div>` : ""}
     ${verdict ? `<div class="notice ${verdict[0]}">${verdict[0] === "ok" ? icons.check : icons.alert}${verdict[1]}</div>` : ""}
+    ${readinessNote}
     <div class="tiles">
       <div class="card tile"><div class="label">Race in</div><div class="value">${p.finished ? "–" : p.days_to_race}<small>days</small></div>
         <div class="delta">${p.finished ? "done" : `${wksLeft} week${wksLeft === 1 ? "" : "s"}`}</div></div>
       <div class="card tile"><div class="label">Goal</div><div class="value">${goal ? fmt.dur(goal) : "–"}</div>
         <div class="delta">${goal ? fmt.pace(goal / c.distance_m * 1000) + " /km" : "no goal time set"}</div></div>
       <div class="card tile"><div class="label">Predicted today</div><div class="value">${p.predicted_time_s ? fmt.dur(p.predicted_time_s) : "–"}</div>
-        <div class="delta">${p.vdot_current ? `VDOT ${p.vdot_current} at plan start` : "no recent efforts"}</div></div>
+        <div class="delta">${p.vdot_current ? `VDOT ${p.vdot_current} at plan start` : "no recent efforts"}${watchPred ? `<br>watch says ${fmt.dur(watchPred.time_s)}` : ""}</div></div>
       <div class="card tile"><div class="label">Phase</div><div class="value">${cur ? PHASES[cur.phase][0] : "–"}</div>
         <div class="delta">${!cur ? "" : upcoming ? `starts ${fmt.weekLabel(cur.start)}` : `week ${cur.index} of ${p.weeks.length}`}</div></div>
     </div>
@@ -588,13 +910,19 @@ async function renderPlan() {
     </div>
     <div class="card">
       <div class="card-head"><h2>Full plan</h2><span class="sub">${p.weeks.length} weeks · ${fmt.km(p.weeks.reduce((a, w) => a + w.planned_km, 0) * 1000, 0)} km</span></div>
-      ${p.weeks.map((w) => `<details class="plan-week" ${w.index === p.current_week ? "open" : ""}>
+      ${p.weeks.map((w) => `<details class="plan-week" data-week="${w.index}" ${(openWeeks.size ? openWeeks.has(w.index) : w.index === p.current_week) ? "open" : ""}>
         <summary><span class="wk">Week ${w.index}</span><span class="phase ph-${w.phase}">${PHASES[w.phase][0]}${w.recovery ? " · easier" : ""}</span>
           <span class="muted">${fmt.weekLabel(w.start)}</span><span class="spacer"></span>
           <span class="num">${w.start <= today ? `${fmt.km(w.actual_km * 1000)} / ` : ""}${fmt.km(w.planned_km * 1000)} km</span></summary>
         ${weekTable(w, today)}
       </details>`).join("")}
     </div>`;
+
+  // keep the weeks you opened open when the page redraws after an adjustment
+  document.querySelectorAll(".plan-week").forEach((d) => d.addEventListener("toggle", () => {
+    const open = [...document.querySelectorAll(".plan-week[open]")].map((x) => +x.dataset.week);
+    sessionStorageSet("open-weeks", JSON.stringify(open.length ? open : [0]));
+  }));
 
   $("#plan-del").onclick = async () => {
     if (!confirm("Delete this training plan? Your runs are not affected.")) return;
@@ -766,7 +1094,7 @@ async function renderActivity(id) {
         <h1>${sportIcon(a.sport)}${esc(a.name)}</h1>
         <div class="sub">${fmt.dateTime(a.start_local)}${a.device ? " · " + esc(a.device) : ""}</div>
       </div>
-      <div>${stravaCell(a, { big: true })}</div>
+      <div class="head-actions">${fitLink(a, true)}${stravaCell(a, { big: true })}</div>
     </div>
     <div class="tiles">${tiles}</div>
     ${a.polyline ? `<div class="card"><div class="map" id="map"></div></div>` : ""}
@@ -1040,6 +1368,8 @@ async function renderSettings() {
           <dt>Watched folder</dt><dd><code>${esc(s.watch_dir)}</code>${s.watch_dir_exists ? "" : ` <span class="pill err">${icons.alert} not found</span>`}</dd>
           <dt>Scan interval</dt><dd>every ${s.scan_interval} s</dd>
           <dt>Last scan</dt><dd>${ls ? `${fmt.dateTime(ls.at)} · ${ls.imported} new, ${ls.skipped} skipped, ${ls.error} errors` : "never"}</dd>
+          <dt>Gadgetbridge export</dt><dd>${s.health_import ? `<code>${esc(s.health_import.source.split("/").pop())}</code> · exported ${fmt.dateTime(s.health_import.exported_at)} · ${s.health_import.days} days`
+            : s.gadgetbridge_dir_exists ? `no <code>.db</code> found in <code>${esc(s.gadgetbridge_dir)}</code>` : "not set up (GADGETBRIDGE_PATH)"}</dd>
         </dl>
       </div>
       <div class="card">
@@ -1052,6 +1382,17 @@ async function renderSettings() {
         <p class="sub">Change <code>MAX_HR</code> / <code>RESTING_HR</code> in <code>.env</code>, restart, then “Recalculate all” to update zones and load.
         ${rp ? `<br>Last recalculation: ${rp.done}/${rp.total}${rp.failed ? `, ${rp.failed} failed` : ""}.` : ""}</p>
       </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Coach note (local AI)</h2>${s.coach.configured ? `<button id="coach-test">${icons.refresh} Write a note now</button>` : ""}</div>
+      ${s.coach.configured ? `<dl class="kv">
+          <dt>Ollama</dt><dd><code>${esc(s.coach.url)}</code></dd>
+          <dt>Model</dt><dd><code>${esc(s.coach.model)}</code></dd>
+          <dt>Status</dt><dd>${!s.coach.status ? "not tried yet"
+            : s.coach.status.ok ? `<span class="pill good">${icons.check} working</span> last note ${fmt.dateTime(s.coach.status.at)}`
+            : `<span class="pill err">${icons.alert} failed</span> ${esc(s.coach.status.error)} <span class="sub">(${fmt.dateTime(s.coach.status.at)})</span>`}</dd>
+        </dl>`
+        : `<p class="sub">Set <code>OLLAMA_URL</code> and <code>OLLAMA_MODEL</code> in <code>.env</code> to get a short daily note on the dashboard, written by a model running on your own network from the numbers the app computes.</p>`}
     </div>
     <div class="card">
       <div class="card-head"><h2>Import log</h2><span class="sub">latest 50 files</span></div>
@@ -1075,6 +1416,19 @@ async function renderSettings() {
     e.target.disabled = true;
     try { await api("/api/reprocess", { method: "POST" }); toast("Recalculating in the background…"); }
     catch (err) { toast(err.message); }
+  };
+  const ct = $("#coach-test");
+  if (ct) ct.onclick = async () => {
+    ct.disabled = true;
+    try {
+      await api("/api/coach/refresh", { method: "POST" });
+      toast("Writing a note… this page updates when it's done");
+      const h = setInterval(async () => {
+        const c = await api("/api/coach").catch(() => null);
+        if (c && !c.writing) { clearInterval(h); route(); }
+      }, 4000);
+      timers.push(h);
+    } catch (err) { toast(err.message); ct.disabled = false; }
   };
   const off = $("#strava-off");
   if (off) off.onclick = async () => {

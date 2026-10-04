@@ -157,6 +157,10 @@ def _easy(day, km, paces, strides=False):
     return _session(day, "easy", "Easy + strides" if strides else "Easy", detail, km)
 
 
+def easy_session(day: date, km: float, paces: dict) -> dict:
+    return _easy(day, km, paces)
+
+
 def _long(day, km, phase, phase_week, distance_m, paces):
     base = f"Steady, {_easy_range(paces)}"
     if phase == "peak":

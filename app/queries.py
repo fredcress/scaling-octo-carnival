@@ -4,10 +4,10 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from . import adapt, plan
 from . import analytics as an
-from . import plan
 from .config import settings
-from .db import connect, unpack_streams
+from .db import connect, kv_get, unpack_streams
 
 LIST_COLS = """id, name, sport, sub_sport, is_run, start_local, local_date, distance_m,
     moving_s, avg_speed, avg_hr, ascent_m, trimp, trimp_estimated,
@@ -69,6 +69,8 @@ def summary() -> dict:
         fitness = series[-180:]
 
     vo2 = [r for r in runs if r["vo2max"]]
+    # Garmin's FIT files often leave VO2max out; the Gadgetbridge export has it
+    watch_vo2 = (kv_get("watch_metrics") or {}).get("vo2max")
     month_start = t.replace(day=1)
     return {
         "today": t.isoformat(),
@@ -81,13 +83,15 @@ def summary() -> dict:
         "all_time": _totals(runs),
         "pace_28d": _pace_window(runs, t - timedelta(days=27), t + timedelta(days=1)),
         "pace_prev_28d": _pace_window(runs, t - timedelta(days=55), t - timedelta(days=27)),
-        "vo2max": {"value": vo2[-1]["vo2max"], "date": vo2[-1]["local_date"]} if vo2 else None,
+        "vo2max": ({"value": vo2[-1]["vo2max"], "date": vo2[-1]["local_date"]} if vo2
+                   and (not watch_vo2 or vo2[-1]["local_date"] >= watch_vo2["date"]) else watch_vo2),
         "weeks": weeks,
         "fitness": fitness,
         "current": fitness[-1] if fitness else None,
         "recent": recent,
         "unsent": unsent,
         "total_activities": total_acts,
+        "readiness": readiness(),
     }
 
 
@@ -233,42 +237,33 @@ def plan_view(cfg: dict) -> dict:
     t = today()
     gen = plan.generate(cfg)
     weeks = gen["weeks"]
+    adapt.apply_overrides(weeks, kv_get("plan_overrides") or {}, gen["paces"])
     first = weeks[0]["start"]
     with connect() as conn:
         rows = conn.execute(
-            "SELECT id, name, local_date, distance_m FROM activities "
+            "SELECT id, name, local_date, distance_m, hr_zones, splits FROM activities "
             "WHERE is_run = 1 AND local_date BETWEEN ? AND ? ORDER BY start_utc",
             (first, cfg["race_date"])).fetchall()
-    by_day = defaultdict(list)
-    for r in rows:
-        by_day[r["local_date"]].append({"id": r["id"], "name": r["name"],
-                                        "distance_km": round((r["distance_m"] or 0) / 1000, 2)})
-    current = None
-    for w in weeks:
-        ws = date.fromisoformat(w["start"])
-        days = {(ws + timedelta(days=i)).isoformat() for i in range(7)}
-        planned_days = set()
-        for s in w["sessions"]:
-            planned_days.add(s["date"])
-            s["runs"] = by_day.get(s["date"], [])
-            done_km = sum(r["distance_km"] for r in s["runs"])
-            d = date.fromisoformat(s["date"])
-            if done_km >= 0.6 * s["distance_km"]:
-                s["status"] = "done"
-            elif d > t:
-                s["status"] = "upcoming"
-            elif d == t:
-                s["status"] = "today"
-            else:
-                s["status"] = "partial" if done_km else "missed"
-        w["extra_runs"] = [dict(r, date=day) for day in sorted(days - planned_days)
-                           for r in by_day.get(day, [])]
-        w["actual_km"] = round(sum(r["distance_km"] for day in days for r in by_day.get(day, [])), 1)
-        if ws <= t < ws + timedelta(days=7):
-            current = w["index"]
+    runs = [{"id": r["id"], "name": r["name"], "date": r["local_date"],
+             "distance_km": round((r["distance_m"] or 0) / 1000, 2),
+             "hr_zones": json.loads(r["hr_zones"]) if r["hr_zones"] else None,
+             "splits": json.loads(r["splits"]) if r["splits"] else None} for r in rows]
+    ready = readiness()
+    # match what was actually run to the plan and re-plan the rest of each week
+    adapt.reconcile(weeks, runs, t, gen["paces"], ready["level"] if ready else None,
+                    kv_get("run_kinds") or {})
+    for r in runs:  # the page doesn't need the raw data
+        r.pop("hr_zones")
+        r.pop("splits")
+    current = next((w["index"] for w in weeks
+                    if date.fromisoformat(w["start"]) <= t < date.fromisoformat(w["start"]) + timedelta(days=7)),
+                   None)
     race_day = date.fromisoformat(cfg["race_date"])
+    cur = next((w for w in weeks if w["index"] == current), None)
     return {
         **gen,
+        "advice": adapt.advice(cur, ready, t, weeks) if t <= race_day else [],
+        "overrides": kv_get("plan_overrides") or {},
         "config": {k: cfg[k] for k in ("race_name", "race_date", "distance_m", "goal_time_s",
                                        "runs_per_week", "long_run_day", "start_date")},
         "label": plan.RACE_DISTANCES[cfg["distance_m"]],
@@ -277,7 +272,93 @@ def plan_view(cfg: dict) -> dict:
         "days_to_race": (race_day - t).days,
         "current_week": current,
         "finished": t > race_day,
+        "readiness": ready,
+        "watch": kv_get("watch_metrics"),
     }
+
+
+HRV_STATUS = {1: "poor", 2: "low", 3: "unbalanced", 4: "balanced"}
+
+
+def _health_rows(conn, since: date) -> list[dict]:
+    return [dict(r) for r in conn.execute(
+        "SELECT * FROM health_daily WHERE date >= ? ORDER BY date", (since.isoformat(),))]
+
+
+BIG_RUN_KM = 15
+BIG_LOAD_FACTOR = 1.8  # times the average load of a run over the last 4 weeks
+
+
+def _big_session_yesterday(t: date) -> str | None:
+    """'21.1 km long run' when yesterday's running was long or unusually hard."""
+    y = (t - timedelta(days=1)).isoformat()
+    with connect() as conn:
+        rows = conn.execute("SELECT local_date, distance_m, trimp FROM activities WHERE is_run = 1 "
+                            "AND local_date BETWEEN ? AND ?", ((t - timedelta(days=28)).isoformat(), y)).fetchall()
+    yday = [r for r in rows if r["local_date"] == y]
+    if not yday:
+        return None
+    km = sum(r["distance_m"] or 0 for r in yday) / 1000
+    load = sum(r["trimp"] or 0 for r in yday)
+    loads = [r["trimp"] for r in rows if r["trimp"]]
+    avg = sum(loads) / len(loads) if loads else 0
+    if km >= BIG_RUN_KM:
+        return f"{km:.1f} km long run"
+    if avg and load >= BIG_LOAD_FACTOR * avg:
+        return f"hard {km:.1f} km session"
+    return None
+
+
+def readiness(rows: list[dict] | None = None) -> dict | None:
+    """Morning check from last night's HRV and sleep and today's resting HR.
+    None when there is no data for last night (the export hasn't caught up yet)."""
+    t = today()
+    if rows is None:
+        with connect() as conn:
+            rows = _health_rows(conn, t - timedelta(days=31))
+    by_day = {r["date"]: r for r in rows}
+    cur = by_day.get(t.isoformat())
+    if not cur or (cur["sleep_s"] is None and cur["hrv_night"] is None):
+        return None
+    flags = []
+    if cur["hrv_night"] and cur["hrv_low"] and cur["hrv_night"] < cur["hrv_low"]:
+        flags.append(f"HRV {cur['hrv_night']} ms is below your usual range "
+                     f"({cur['hrv_low']}–{cur['hrv_high']})")
+    if cur["sleep_s"] is not None and cur["sleep_s"] < 6 * 3600:
+        flags.append(f"only {cur['sleep_s'] // 3600}h{cur['sleep_s'] % 3600 // 60:02d} of sleep")
+    elif cur["sleep_score"] is not None and cur["sleep_score"] < 60:
+        flags.append(f"sleep score {cur['sleep_score']}")
+    past = sorted(r["resting_hr"] for d, r in by_day.items() if d < t.isoformat() and r["resting_hr"])
+    if cur["resting_hr"] and len(past) >= 7:
+        normal = past[len(past) // 2]
+        if cur["resting_hr"] >= normal + 5:
+            flags.append(f"resting HR {round(cur['resting_hr'])} bpm, {round(cur['resting_hr'] - normal)} "
+                         "above your usual")
+    level = "good" if not flags else "ok" if len(flags) == 1 else "low"
+    # a dip the morning after a big session is the training working, not a warning sign
+    context = None
+    big = _big_session_yesterday(t)
+    if flags and big:
+        context = f"Expected after yesterday's {big} – this usually settles within a day or two."
+    advice = {
+        "good": "Recovered: go ahead with today's session.",
+        "ok": "Slightly under par: do today's session but keep easy parts truly easy.",
+        "low": "Not well recovered: swap a hard session for an easy run or rest.",
+    }[level]
+    return {"date": t.isoformat(), "level": level, "flags": flags, "advice": advice, "context": context,
+            "hrv_night": cur["hrv_night"], "sleep_s": cur["sleep_s"], "sleep_score": cur["sleep_score"],
+            "resting_hr": cur["resting_hr"]}
+
+
+def health(days: int = 120) -> dict:
+    t = today()
+    with connect() as conn:
+        rows = _health_rows(conn, t - timedelta(days=days - 1))
+    for r in rows:
+        r["hrv_status_label"] = HRV_STATUS.get(r["hrv_status"])
+    return {"today": t.isoformat(), "days": rows, "readiness": readiness(rows),
+            "watch": kv_get("watch_metrics"), "import": kv_get("health_import"),
+            "configured": settings.gadgetbridge_dir.is_dir()}
 
 
 def heatmap() -> list:
