@@ -4,17 +4,19 @@ import secrets
 import threading
 import time
 from contextlib import asynccontextmanager
+from datetime import date, timedelta
 from pathlib import Path
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import analytics as an
-from . import queries, strava, watcher
+from . import plan, queries, strava, watcher
 from .config import settings
-from .db import connect, init_db, kv_get, kv_set
+from .db import connect, init_db, kv_delete, kv_get, kv_set
 from .fitimport import reprocess
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -46,7 +48,7 @@ def require_user(request: Request) -> str:
     user = request.session.get("user")
     if not user:
         raise HTTPException(401, "login required")
-    if request.method == "POST" and request.headers.get("x-requested-with") != "fetch":
+    if request.method not in ("GET", "HEAD") and request.headers.get("x-requested-with") != "fetch":
         raise HTTPException(403, "missing X-Requested-With header")
     return user
 
@@ -151,6 +153,46 @@ def api_records():
 @app.get("/api/heatmap", dependencies=[api])
 def api_heatmap():
     return queries.heatmap()
+
+
+class PlanIn(BaseModel):
+    race_name: str = Field("", max_length=80)
+    race_date: date
+    distance_m: float
+    goal_time_s: float | None = Field(None, gt=0)
+    runs_per_week: int = Field(4, ge=3, le=6)
+    long_run_day: int = Field(6, ge=0, le=6)
+
+
+def _plan_response() -> dict:
+    cfg = kv_get("plan")
+    return {"plan": queries.plan_view(cfg) if cfg else None, "baseline": queries.plan_baseline()}
+
+
+@app.get("/api/plan", dependencies=[api])
+def api_plan():
+    return _plan_response()
+
+
+@app.post("/api/plan", dependencies=[api])
+def api_plan_save(body: PlanIn):
+    t = queries.today()
+    if body.distance_m not in plan.RACE_DISTANCES:
+        raise HTTPException(400, "unsupported race distance")
+    if not t + timedelta(days=7) <= body.race_date <= t + timedelta(days=365):
+        raise HTTPException(400, "race date must be between 1 week and 1 year from today")
+    if body.goal_time_s and not 120 <= body.goal_time_s / body.distance_m * 1000 <= 900:
+        raise HTTPException(400, "goal time works out at an unrealistic pace")
+    # saving (re)builds from today and from current fitness, so paces stay honest
+    kv_set("plan", {**body.model_dump(mode="json"), "start_date": t.isoformat(),
+                    "baseline": queries.plan_baseline()})
+    return _plan_response()
+
+
+@app.delete("/api/plan", dependencies=[api])
+def api_plan_delete():
+    kv_delete("plan")
+    return _plan_response()
 
 
 @app.get("/api/settings", dependencies=[api])

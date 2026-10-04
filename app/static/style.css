@@ -199,6 +199,40 @@ dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; ma
 dl.kv dt { color: var(--ink-2); }
 dl.kv dd { margin: 0; }
 .loading { color: var(--muted); padding: 40px 0; }
+.notice.warn svg { color: var(--warning); }
+
+/* ---------------------------------------------------------------- forms */
+.form { display: grid; gap: 14px; align-content: start; }
+.form label { display: grid; gap: 5px; font-size: 13.5px; font-weight: 550; }
+.form .row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.form input, .form select {
+  font: inherit; font-size: 15px; font-weight: 400; color: var(--ink);
+  background: var(--page); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+  width: 100%; min-width: 0;
+}
+.form input:focus, .form select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+/* ---------------------------------------------------------------- plan */
+.key.planned { background: var(--muted); opacity: .35; }
+.plan-table td.wrap { white-space: normal; min-width: 220px; }
+.plan-table td.wrap .sub { margin-top: 2px; }
+.plan-table td .key { margin-right: 6px; }
+.plan-table tr.is-today td { background: var(--surface-2); }
+.pill.today { color: var(--accent); }
+.plan-week { border-top: 1px solid var(--grid); }
+.plan-week summary {
+  display: flex; align-items: center; gap: 12px; padding: 10px 2px; cursor: pointer;
+  list-style: none; font-size: 14px;
+}
+.plan-week summary::-webkit-details-marker { display: none; }
+.plan-week summary::before { content: "›"; color: var(--muted); width: 10px; transition: transform .15s; }
+.plan-week[open] summary::before { transform: rotate(90deg); }
+.plan-week .wk { font-weight: 600; min-width: 64px; }
+.plan-week .spacer { flex: 1; }
+.plan-week .table-wrap { margin-bottom: 10px; }
+.phase { font-size: 12.5px; padding: 1px 8px; border-radius: 99px; background: var(--surface-2); color: var(--ink-2); }
+.phase.ph-peak, .phase.ph-race { color: var(--ink); font-weight: 550; }
+dl.kv.paces { row-gap: 10px; }
 .toast { position: fixed; bottom: 20px; right: 20px; background: var(--ink); color: var(--page); padding: 10px 16px; border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 2000; }
 .toast.show { opacity: 1; }
 
@@ -217,4 +251,11 @@ dl.kv dd { margin: 0; }
   .hero-value { font-size: 44px; }
   .hero { gap: 16px; }
   .map.full { height: calc(100vh - 210px); }
+  .plan-table td.wrap { min-width: 0; }
+  .plan-table th, .plan-table td { padding-left: 6px; padding-right: 6px; }
+  .plan-table td:first-child { white-space: normal; width: 52px; }
+  .plan-week summary { gap: 8px; }
+  .plan-week .wk { min-width: 0; }
+  .plan-week summary .muted { display: none; }
+  .phase { white-space: nowrap; }
 }

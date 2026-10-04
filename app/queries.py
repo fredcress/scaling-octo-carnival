@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from . import analytics as an
+from . import plan
 from .config import settings
 from .db import connect, unpack_streams
 
@@ -192,6 +193,91 @@ def records() -> dict:
         predictions.append({"distance_m": target, "label": an.BEST_EFFORT_DISTANCES[target],
                             **(best or {"time_s": None})})
     return {"bests": bests, "predictions": predictions, "window_days": 90}
+
+
+def plan_baseline() -> dict:
+    """Where training starts from: recent weekly volume, longest recent run and the
+    VDOT of the best effort of the last 90 days."""
+    t = today()
+    with connect() as conn:
+        runs = _runs(conn, "local_date, distance_m")
+        efforts = conn.execute("""
+            SELECT b.distance_m, b.time_s FROM best_efforts b
+            JOIN activities a ON a.id = b.activity_id
+            WHERE a.is_run = 1 AND a.local_date >= ?""",
+            ((t - timedelta(days=90)).isoformat(),)).fetchall()
+    out = {"week_km": 0.0, "long_km": 0.0, "vdot": None, "vdot_from": None}
+    if runs:
+        first = date.fromisoformat(runs[0]["local_date"])
+        # a new user's first fortnight shouldn't be averaged over four weeks
+        window = max(7, min(28, (t - first).days + 1))
+        recent = [r for r in runs if (t - date.fromisoformat(r["local_date"])).days < window]
+        out["week_km"] = round(sum(r["distance_m"] or 0 for r in recent) / 1000 / (window / 7), 1)
+        out["long_km"] = round(max((r["distance_m"] or 0 for r in runs
+                                    if (t - date.fromisoformat(r["local_date"])).days < 42),
+                                   default=0) / 1000, 1)
+    # same rule as the Records predictions: short efforts flatter long races
+    sources = [e for e in efforts if e["distance_m"] >= 5000] or efforts
+    for e in sources:
+        v = plan.vdot(e["distance_m"], e["time_s"])
+        if out["vdot"] is None or v > out["vdot"]:
+            out["vdot"] = round(v, 1)
+            out["vdot_from"] = {"label": an.BEST_EFFORT_DISTANCES[e["distance_m"]], "time_s": e["time_s"]}
+    out["predictions"] = ({str(d): round(plan.race_time(d, out["vdot"])) for d in plan.RACE_DISTANCES}
+                          if out["vdot"] else {})
+    return out
+
+
+def plan_view(cfg: dict) -> dict:
+    """The generated plan with each session marked against the runs actually done."""
+    t = today()
+    gen = plan.generate(cfg)
+    weeks = gen["weeks"]
+    first = weeks[0]["start"]
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT id, name, local_date, distance_m FROM activities "
+            "WHERE is_run = 1 AND local_date BETWEEN ? AND ? ORDER BY start_utc",
+            (first, cfg["race_date"])).fetchall()
+    by_day = defaultdict(list)
+    for r in rows:
+        by_day[r["local_date"]].append({"id": r["id"], "name": r["name"],
+                                        "distance_km": round((r["distance_m"] or 0) / 1000, 2)})
+    current = None
+    for w in weeks:
+        ws = date.fromisoformat(w["start"])
+        days = {(ws + timedelta(days=i)).isoformat() for i in range(7)}
+        planned_days = set()
+        for s in w["sessions"]:
+            planned_days.add(s["date"])
+            s["runs"] = by_day.get(s["date"], [])
+            done_km = sum(r["distance_km"] for r in s["runs"])
+            d = date.fromisoformat(s["date"])
+            if done_km >= 0.6 * s["distance_km"]:
+                s["status"] = "done"
+            elif d > t:
+                s["status"] = "upcoming"
+            elif d == t:
+                s["status"] = "today"
+            else:
+                s["status"] = "partial" if done_km else "missed"
+        w["extra_runs"] = [dict(r, date=day) for day in sorted(days - planned_days)
+                           for r in by_day.get(day, [])]
+        w["actual_km"] = round(sum(r["distance_km"] for day in days for r in by_day.get(day, [])), 1)
+        if ws <= t < ws + timedelta(days=7):
+            current = w["index"]
+    race_day = date.fromisoformat(cfg["race_date"])
+    return {
+        **gen,
+        "config": {k: cfg[k] for k in ("race_name", "race_date", "distance_m", "goal_time_s",
+                                       "runs_per_week", "long_run_day", "start_date")},
+        "label": plan.RACE_DISTANCES[cfg["distance_m"]],
+        "baseline": cfg["baseline"],
+        "today": t.isoformat(),
+        "days_to_race": (race_day - t).days,
+        "current_week": current,
+        "finished": t > race_day,
+    }
 
 
 def heatmap() -> list:

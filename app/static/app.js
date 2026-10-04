@@ -82,6 +82,7 @@ const icons = {
   upload: I('<path d="M12 16V4M6 10l6-6 6 6M4 20h16"/>'),
   star: I('<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z" fill="currentColor"/>'),
   refresh: I('<path d="M21 12a9 9 0 1 1-2.6-6.4L21 8M21 3v5h-5"/>'),
+  flag: I('<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>'),
 };
 const sportIcon = (sport) =>
   `<span class="sport-ico">${{ running: icons.run, cycling: icons.ride, walking: icons.walk, hiking: icons.walk }[sport] || icons.other}</span>`;
@@ -90,6 +91,7 @@ const sportIcon = (sport) =>
 
 const NAV = [
   ["#/", "Dashboard", icons.dash],
+  ["#/plan", "Plan", icons.flag],
   ["#/activities", "Activities", icons.list],
   ["#/trends", "Trends", icons.trend],
   ["#/records", "Records", icons.trophy],
@@ -112,6 +114,7 @@ function cleanup() {
 
 const routes = [
   [/^#\/?$/, renderDashboard],
+  [/^#\/plan$/, renderPlan],
   [/^#\/activities$/, renderActivities],
   [/^#\/activity\/(\d+)$/, renderActivity],
   [/^#\/trends$/, renderTrends],
@@ -449,6 +452,242 @@ async function renderDashboard() {
     options: baseOptions(t, { xFmt: fmt.weekLabel }),
   });
   watchUploads();
+}
+
+/* ================================================================ training plan */
+
+const RACES = [[5000, "5 km"], [10000, "10 km"], [21097.5, "Half marathon"], [42195, "Marathon"]];
+const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const PHASES = {
+  base: ["Base", "Easy volume and strides to build the aerobic engine"],
+  build: ["Build", "Threshold and interval sessions, volume still rising"],
+  peak: ["Peak", "Race-pace work and your longest runs"],
+  taper: ["Taper", "Less volume, a little race pace: arrive fresh"],
+  race: ["Race week", "Short and easy, then race"],
+};
+const SESSION_COLOR = { easy: "--z1", long: "--z2", fartlek: "--z3", threshold: "--z3", intervals: "--z4", race_pace: "--z5", race: "--strava" };
+
+function parseDuration(text) {
+  const parts = String(text).trim().split(":").map(Number);
+  if (!text.trim() || parts.some((p) => !isFinite(p) || p < 0) || parts.length < 2 || parts.length > 3) return null;
+  return parts.reduce((acc, p) => acc * 60 + p, 0);
+}
+
+function sessionStatus(s) {
+  return {
+    done: `<span class="pill good">${icons.check} Done</span>`,
+    partial: `<span class="pill">Partly done</span>`,
+    missed: `<span class="pill err">Missed</span>`,
+    today: `<span class="pill today">Today</span>`,
+  }[s.status] || "";
+}
+
+function sessionRow(s, today) {
+  const done = s.runs.map((r) => `<a href="#/activity/${r.id}">${fmt.km(r.distance_km * 1000, 1)} km</a>`).join(", ");
+  return `<tr class="${s.date === today ? "is-today" : ""}">
+    <td class="muted">${fmt.date(s.date, { weekday: "short", day: "numeric", month: "short" })}</td>
+    <td class="wrap"><i class="key" style="background:var(${SESSION_COLOR[s.type] || "--z1"})"></i>
+      <span class="act-name">${esc(s.title)}</span><div class="sub">${esc(s.detail)}</div></td>
+    <td class="r">${fmt.km(s.distance_km * 1000, 1)} km</td>
+    <td class="r">${done ? done : ""}</td>
+    <td>${sessionStatus(s)}</td>
+  </tr>`;
+}
+
+function weekTable(w, today) {
+  const extra = w.extra_runs.map((r) => `<tr><td class="muted">${fmt.date(r.date, { weekday: "short", day: "numeric", month: "short" })}</td>
+    <td class="wrap muted">Extra run · ${esc(r.name)}</td><td></td><td class="r"><a href="#/activity/${r.id}">${fmt.km(r.distance_km * 1000, 1)} km</a></td><td></td></tr>`).join("");
+  return `<div class="table-wrap"><table class="plan-table">
+    <thead><tr><th>Day</th><th>Session</th><th class="r">Planned</th><th class="r">Done</th><th></th></tr></thead>
+    <tbody>${w.sessions.map((s) => sessionRow(s, today)).join("")}${extra}</tbody></table></div>`;
+}
+
+async function renderPlan() {
+  const d = await api("/api/plan");
+  const editing = new URLSearchParams(location.hash.split("?")[1] || "").has("edit");
+  if (!d.plan || editing) return renderPlanForm(d);
+  const p = d.plan, c = p.config, today = p.today;
+  // set up late in the week, the plan starts next Monday: preview its first week
+  const upcoming = !p.current_week && !p.finished;
+  const cur = p.weeks.find((w) => w.index === p.current_week) || (upcoming ? p.weeks[0] : null);
+  const wksLeft = Math.ceil(p.days_to_race / 7);
+  const goal = c.goal_time_s;
+
+  let verdict = "";
+  if (goal && p.vdot_current) {
+    const gap = p.vdot_goal - p.vdot_current, weeks = p.weeks.length;
+    verdict = gap <= 0 ? ["ok", `Your current fitness already predicts ${fmt.dur(p.predicted_time_s)}. The goal is within reach; you could aim higher.`]
+      : gap <= weeks * 0.25 ? ["ok", `Realistic: the goal needs about ${gap.toFixed(1)} VDOT points more than you show today, over ${weeks} weeks.`]
+      : gap <= weeks * 0.4 ? ["warn", `Ambitious: ${gap.toFixed(1)} VDOT points to gain in ${weeks} weeks. Possible if training goes well.`]
+      : ["err", `Very ambitious: ${gap.toFixed(1)} VDOT points in ${weeks} weeks is a big jump. Around ${fmt.dur(p.predicted_time_s)} is what you're running now.`];
+  } else if (!p.vdot_current) {
+    verdict = ["warn", goal ? "No recent 5 km+ efforts found, so all paces come from your goal time."
+      : "No recent 5 km+ efforts and no goal time, so paces are a cautious guess. Add a goal time or rebuild after a few runs."];
+  }
+
+  const pc = p.paces;
+  const paceRows = [
+    ["Easy &amp; long runs", `${fmt.pace(pc.easy[0])}–${fmt.pace(pc.easy[1])}`, "Most of your running. You should be able to talk."],
+    c.distance_m === 42195 ? ["Marathon", fmt.pace(pc.marathon), "Steady and sustainable."] : null,
+    ["Threshold", fmt.pace(pc.threshold), "Comfortably hard: about the pace you could hold for an hour."],
+    ["Interval", fmt.pace(pc.interval), "Hard, 3–5 min repeats. Builds VO₂max."],
+    ["Race pace", fmt.pace(pc.race), goal ? `Your goal: ${fmt.dur(goal)}` : `Predicted: ${fmt.dur(pc.race * c.distance_m / 1000)}`],
+  ].filter(Boolean);
+
+  const thisWeek = cur ? (() => {
+    const ws = new Date(cur.start + "T12:00:00");
+    const rows = WEEKDAYS.map((_, i) => {
+      const day = new Date(ws.getTime() + i * 86400000).toISOString().slice(0, 10);
+      const s = cur.sessions.find((x) => x.date === day);
+      if (s) return sessionRow(s, today);
+      const extra = cur.extra_runs.filter((r) => r.date === day);
+      return `<tr class="${day === today ? "is-today" : ""}"><td class="muted">${fmt.date(day, { weekday: "short", day: "numeric", month: "short" })}</td>
+        <td class="muted">${extra.length ? `Extra run · ${esc(extra[0].name)}` : "Rest"}</td><td></td>
+        <td class="r">${extra.map((r) => `<a href="#/activity/${r.id}">${fmt.km(r.distance_km * 1000, 1)} km</a>`).join(", ")}</td><td></td></tr>`;
+    }).join("");
+    return `<div class="card">
+      <div class="card-head"><h2>${upcoming ? `First week, starting ${fmt.date(cur.start, { weekday: "long", day: "numeric", month: "short" })}` : "This week"} · ${PHASES[cur.phase][0]}${cur.recovery ? " (easier week)" : ""}</h2>
+        <span class="sub">${fmt.km(cur.actual_km * 1000)} of ${fmt.km(cur.planned_km * 1000)} km</span></div>
+      <p class="sub" style="margin-top:-4px">${PHASES[cur.phase][1]}${cur.recovery ? ". Lighter on purpose so your body absorbs the last three weeks." : "."}</p>
+      <div class="table-wrap"><table class="plan-table">
+        <thead><tr><th>Day</th><th>Session</th><th class="r">Planned</th><th class="r">Done</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table></div>
+    </div>`;
+  })() : "";
+
+  view.innerHTML = `
+    <div class="page-head">
+      <div><h1>${esc(c.race_name || p.label)}</h1>
+        <div class="sub">${esc(p.label)} · ${fmt.date(c.race_date, { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</div></div>
+      <div style="display:flex;gap:8px"><a class="btn" href="#/plan?edit=1">Edit / rebuild</a><button id="plan-del">Delete</button></div>
+    </div>
+    ${p.finished ? `<div class="notice ok">${icons.check}Race day has passed. Hope it went well! <a href="#/plan?edit=1" style="margin-left:6px">Set up the next one</a></div>` : ""}
+    ${verdict ? `<div class="notice ${verdict[0]}">${verdict[0] === "ok" ? icons.check : icons.alert}${verdict[1]}</div>` : ""}
+    <div class="tiles">
+      <div class="card tile"><div class="label">Race in</div><div class="value">${p.finished ? "–" : p.days_to_race}<small>days</small></div>
+        <div class="delta">${p.finished ? "done" : `${wksLeft} week${wksLeft === 1 ? "" : "s"}`}</div></div>
+      <div class="card tile"><div class="label">Goal</div><div class="value">${goal ? fmt.dur(goal) : "–"}</div>
+        <div class="delta">${goal ? fmt.pace(goal / c.distance_m * 1000) + " /km" : "no goal time set"}</div></div>
+      <div class="card tile"><div class="label">Predicted today</div><div class="value">${p.predicted_time_s ? fmt.dur(p.predicted_time_s) : "–"}</div>
+        <div class="delta">${p.vdot_current ? `VDOT ${p.vdot_current} at plan start` : "no recent efforts"}</div></div>
+      <div class="card tile"><div class="label">Phase</div><div class="value">${cur ? PHASES[cur.phase][0] : "–"}</div>
+        <div class="delta">${!cur ? "" : upcoming ? `starts ${fmt.weekLabel(cur.start)}` : `week ${cur.index} of ${p.weeks.length}`}</div></div>
+    </div>
+    ${thisWeek}
+    <div class="grid cols-2">
+      <div class="card">
+        <div class="card-head"><h2>Weekly distance</h2>
+          <div class="legend"><span><i class="key planned"></i>Planned</span><span><i class="key" style="background:var(--series-1)"></i>Done</span></div></div>
+        <div class="chart"><canvas id="c-plan"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Your paces</h2><span class="sub">min/km</span></div>
+        <dl class="kv paces">${paceRows.map(([k, v, note]) => `<dt>${k}</dt><dd><strong class="num">${v}</strong> <span class="sub">${note}</span></dd>`).join("")}</dl>
+        <p class="sub">Set from your fitness when the plan was built. Rebuild every 4–6 weeks so paces keep up as you get fitter.</p>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Full plan</h2><span class="sub">${p.weeks.length} weeks · ${fmt.km(p.weeks.reduce((a, w) => a + w.planned_km, 0) * 1000, 0)} km</span></div>
+      ${p.weeks.map((w) => `<details class="plan-week" ${w.index === p.current_week ? "open" : ""}>
+        <summary><span class="wk">Week ${w.index}</span><span class="phase ph-${w.phase}">${PHASES[w.phase][0]}${w.recovery ? " · easier" : ""}</span>
+          <span class="muted">${fmt.weekLabel(w.start)}</span><span class="spacer"></span>
+          <span class="num">${w.start <= today ? `${fmt.km(w.actual_km * 1000)} / ` : ""}${fmt.km(w.planned_km * 1000)} km</span></summary>
+        ${weekTable(w, today)}
+      </details>`).join("")}
+    </div>`;
+
+  $("#plan-del").onclick = async () => {
+    if (!confirm("Delete this training plan? Your runs are not affected.")) return;
+    await api("/api/plan", { method: "DELETE" });
+    route();
+  };
+
+  const t = chartTheme();
+  const o = baseOptions(t, { xFmt: fmt.weekLabel });
+  o.scales.x.stacked = false;
+  o.plugins.tooltip.callbacks = {
+    title: (it) => { const w = p.weeks[it[0].dataIndex]; return `Week ${w.index} · ${PHASES[w.phase][0]} · ${fmt.weekLabel(w.start)}`; },
+    label: (it) => ` ${it.dataset.label}: ${fmt.km(it.parsed.y * 1000)} km`,
+  };
+  makeChart("c-plan", {
+    type: "bar",
+    data: {
+      labels: p.weeks.map((w) => w.start),
+      datasets: [
+        { label: "Planned", data: p.weeks.map((w) => w.planned_km), ...barStyle(alpha(t.muted, 0.3)), grouped: false, order: 2 },
+        { label: "Done", data: p.weeks.map((w) => w.start <= today ? w.actual_km : null), ...barStyle(t.s1), grouped: false, order: 1, barPercentage: 0.55 },
+      ],
+    },
+    options: o,
+  });
+}
+
+function renderPlanForm(d) {
+  const p = d.plan, c = p ? p.config : null, b = d.baseline;
+  const minDate = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+  const dist = c ? c.distance_m : 21097.5;
+  view.innerHTML = `
+    <div class="page-head"><div><h1>${p ? "Rebuild training plan" : "Training plan"}</h1>
+      <div class="sub">Pick a race and the app builds a week-by-week plan from your recent running.</div></div></div>
+    <div class="grid cols-2">
+      <form class="card form" id="plan-form">
+        <label>Race name <span class="muted">(optional)</span><input name="race_name" maxlength="80" placeholder="e.g. Semi de Paris" value="${esc(c ? c.race_name : "")}"></label>
+        <label>Distance<select name="distance_m">${RACES.map(([m, l]) => `<option value="${m}" ${m === dist ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+        <label>Race date<input type="date" name="race_date" required min="${minDate}" value="${c && c.race_date >= minDate ? c.race_date : ""}"></label>
+        <label>Goal time <span class="muted">(optional, h:mm:ss)</span><input name="goal" placeholder="1:45:00" inputmode="numeric" value="${c && c.goal_time_s ? fmt.dur(c.goal_time_s) : ""}">
+          <span class="sub" id="goal-hint"></span></label>
+        <div class="row">
+          <label>Runs per week<select name="runs_per_week">${[3, 4, 5, 6].map((n) => `<option ${n === (c ? c.runs_per_week : 4) ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+          <label>Long run on<select name="long_run_day">${WEEKDAYS.map((w, i) => `<option value="${i}" ${i === (c ? c.long_run_day : 6) ? "selected" : ""}>${w}</option>`).join("")}</select></label>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:6px">
+          <button class="primary" type="submit">${p ? "Rebuild plan" : "Build plan"}</button>
+          ${p ? `<a class="btn" href="#/plan">Cancel</a>` : ""}
+        </div>
+        ${p ? `<p class="sub">Rebuilding starts the plan again from this week, using your current fitness.</p>` : ""}
+      </form>
+      <div class="card">
+        <div class="card-head"><h2>Your starting point</h2><span class="sub">from your runs</span></div>
+        <dl class="kv">
+          <dt>Weekly distance</dt><dd>${fmt.km(b.week_km * 1000)} km <span class="sub">average, last 4 weeks</span></dd>
+          <dt>Longest run</dt><dd>${fmt.km(b.long_km * 1000)} km <span class="sub">last 6 weeks</span></dd>
+          <dt>Fitness</dt><dd>${b.vdot ? `VDOT ${b.vdot} <span class="sub">from a ${esc(b.vdot_from.label)} in ${fmt.dur(b.vdot_from.time_s)}</span>` : `<span class="sub">no 5 km+ effort in the last 90 days</span>`}</dd>
+          <dt>Predicted now</dt><dd id="pred">–</dd>
+        </dl>
+        <p class="sub">Predictions use your fastest stretches inside training runs, so they're on the cautious side if you've mostly run easy.</p>
+        <p class="sub">The plan raises weekly distance by at most about 10%, makes every fourth week lighter, and tapers before race day.</p>
+      </div>
+    </div>`;
+
+  const form = $("#plan-form");
+  const update = () => {
+    const pred = b.predictions[String(+form.distance_m.value)];
+    $("#pred").innerHTML = pred ? `${fmt.dur(pred)} <span class="sub">${fmt.pace(pred / form.distance_m.value * 1000)} /km</span>` : "–";
+    const g = parseDuration(form.goal.value);
+    $("#goal-hint").textContent = g ? `${fmt.pace(g / form.distance_m.value * 1000)} /km` : "";
+  };
+  form.distance_m.onchange = update;
+  form.goal.oninput = update;
+  update();
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const goal = form.goal.value.trim() ? parseDuration(form.goal.value) : null;
+    if (form.goal.value.trim() && !goal) { toast("Goal time should look like 1:45:00 or 48:30"); return; }
+    const btn = form.querySelector("button[type=submit]");
+    btn.disabled = true;
+    try {
+      await api("/api/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          race_name: form.race_name.value.trim(), race_date: form.race_date.value,
+          distance_m: +form.distance_m.value, goal_time_s: goal,
+          runs_per_week: +form.runs_per_week.value, long_run_day: +form.long_run_day.value,
+        }),
+      });
+      if (location.hash === "#/plan") route(); else location.hash = "#/plan";
+    } catch (err) { toast(err.message); btn.disabled = false; }
+  };
 }
 
 /* ================================================================ activities */

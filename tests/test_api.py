@@ -87,5 +87,28 @@ def test_push_without_strava(authed):
     assert r.status_code == 400
 
 
+def test_plan_lifecycle(authed):
+    from datetime import date, timedelta
+    r = authed.get("/api/plan").json()
+    assert r["plan"] is None and r["baseline"]["week_km"] > 0
+    race = (date.today() + timedelta(weeks=12)).isoformat()
+    body = {"race_name": "Semi", "race_date": race, "distance_m": 21097.5,
+            "goal_time_s": 6600, "runs_per_week": 4, "long_run_day": 6}
+    assert authed.post("/api/plan", json=body).status_code == 403  # no X-Requested-With
+    p = authed.post("/api/plan", json=body, headers=H).json()["plan"]
+    assert p["config"]["race_name"] == "Semi" and p["weeks"][-1]["phase"] == "race"
+    assert p["current_week"] in (None, 1)
+    statuses = {s["status"] for w in p["weeks"] for s in w["sessions"]}
+    assert statuses <= {"done", "partial", "missed", "today", "upcoming"}
+    assert authed.get("/api/plan").json()["plan"]["config"]["race_date"] == race
+
+    for bad in ({"race_date": date.today().isoformat()}, {"distance_m": 15000},
+                {"goal_time_s": 600}, {"runs_per_week": 7}):
+        assert authed.post("/api/plan", json=body | bad, headers=H).status_code in (400, 422), bad
+
+    assert authed.delete("/api/plan").status_code == 403
+    assert authed.delete("/api/plan", headers=H).json()["plan"] is None
+
+
 def test_scan_endpoint(authed):
     assert authed.post("/api/scan", headers=H).json()["imported"] == 0

@@ -14,6 +14,12 @@ Garmin FR265 ──BLE──▶ Gadgetbridge (phone) ──Syncthing──▶ NA
 - **Dashboard**: this week vs. the same point last week, month and year totals,
   fitness / fatigue / form, 28-day pace trend, the watch's VO₂max, a
   26-week distance chart, and recent activities.
+- **Training plan**: pick a race (5 km to marathon), a date and optionally a
+  goal time. It builds a week-by-week plan (base, build, peak, taper, race week)
+  from your recent volume, longest run and fitness (Daniels VDOT from your best
+  efforts). It shows easy, threshold, interval and race paces, says whether the
+  goal looks realistic, and marks each session done / missed against your
+  actual runs.
 - **Activity page**: OpenStreetMap route, pace / HR / elevation / cadence /
   power charts, time in HR zones, km splits, laps, best efforts with PR badges,
   Garmin training effect.
