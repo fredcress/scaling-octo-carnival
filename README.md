@@ -46,7 +46,10 @@ Garmin FR265 ──BLE──▶ Gadgetbridge (phone) ──Syncthing──▶ NA
 - **Heatmap** of every run.
 - **Push to Strava** button on every activity (runs, rides, walks…), with
   duplicate detection and a link to the Strava activity once uploaded.
-- Password login, light/dark theme from the OS, works on a phone.
+- Password login, light/dark theme from the OS, works on a phone and can be
+  **installed as an app** (see below).
+- **Kiosk mode** at `/kiosk`: one self-refreshing screen for a wall tablet or
+  a home dashboard's iframe.
 
 All activities are stored and can be pushed to Strava. **KPIs, charts, records
 and the heatmap count runs only** (`sport = running`, including trail and
@@ -107,6 +110,34 @@ has `read:packages`.
 If you put it behind a reverse proxy with HTTPS, set
 `PUBLIC_URL=https://runs.example.com` and `SESSION_HTTPS_ONLY=true`.
 
+## Install on your phone
+
+Open the dashboard in Chrome on Android, then **⋮ → Add to home screen →
+Install**. It opens full screen with its own icon, like an app.
+
+Chrome only offers to *install* on **HTTPS** (or `localhost`). On plain
+`http://<nas>:8420` you only get a bookmark shortcut that opens in a browser
+tab. Put the app behind your reverse proxy with a certificate (e.g.
+`https://runs.example.com`), then set `PUBLIC_URL` and
+`SESSION_HTTPS_ONLY=true`.
+
+## Kiosk mode
+
+`/kiosk` shows one screen with no menu: this week, today's planned session,
+readiness, the coach note, fitness tiles and the main charts. It refreshes
+itself every 5 minutes, and on HTTPS it keeps a tablet's screen on.
+
+- **Logged in**: open `/kiosk` on a device where you're signed in.
+- **No login**: set `KIOSK_TOKEN` and open `/kiosk?token=<KIOSK_TOKEN>`. The
+  token works only on the kiosk page and only reads what that page shows (no
+  activities, settings, Strava or changes). It doesn't need cookies, so it also
+  works inside another dashboard's iframe (Homepage, Homarr, Dashy…).
+- Options: `&theme=dark` or `&theme=light` to override the OS theme,
+  `&refresh=<seconds>` to change the refresh interval (minimum 30).
+
+If the dashboard that embeds it is served over HTTPS, this app must be on
+HTTPS too, or the browser blocks the iframe.
+
 ## Configuration
 
 | Variable | Default | |
@@ -120,6 +151,7 @@ If you put it behind a reverse proxy with HTTPS, set
 | `STRAVA_CLIENT_ID` / `STRAVA_CLIENT_SECRET` | — | From your Strava API app. |
 | `PUBLIC_URL` | request URL | Base URL for the Strava OAuth callback. |
 | `STRAVA_REFRESH_TOKEN` | — | Optional alternative to the Connect button. |
+| `KIOSK_TOKEN` | — | Enables `/kiosk?token=…` without a login. See Kiosk mode. |
 
 After changing `MAX_HR` or `RESTING_HR`: restart, then **Settings →
 Recalculate all**.

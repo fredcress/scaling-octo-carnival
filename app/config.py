@@ -32,6 +32,7 @@ class Settings:
     strava_refresh_token: str
     ollama_url: str = ""
     ollama_model: str = ""
+    kiosk_token: str = ""
 
     @property
     def coach_configured(self) -> bool:
@@ -88,6 +89,7 @@ def load_settings() -> Settings:
         strava_refresh_token=os.environ.get("STRAVA_REFRESH_TOKEN", "").strip(),
         ollama_url=os.environ.get("OLLAMA_URL", "").strip().rstrip("/"),
         ollama_model=os.environ.get("OLLAMA_MODEL", "").strip(),
+        kiosk_token=os.environ.get("KIOSK_TOKEN", "").strip(),
     )
 
 

@@ -158,3 +158,46 @@ def test_plan_lifecycle(authed):
 
 def test_scan_endpoint(authed):
     assert authed.post("/api/scan", headers=H).json()["imported"] == 0
+
+
+def test_installable_as_app(client):
+    m = client.get("/static/manifest.webmanifest")
+    assert m.status_code == 200 and m.json()["display"] == "standalone"
+    for icon in m.json()["icons"]:
+        assert client.get(icon["src"]).status_code == 200
+    sw = client.get("/sw.js")  # served from the root, without a login, so it controls the whole app
+    assert sw.status_code == 200 and "javascript" in sw.headers["content-type"]
+
+
+@pytest.fixture
+def kiosk(imported, monkeypatch):
+    import dataclasses
+    from app import main
+    monkeypatch.setattr(main, "settings", dataclasses.replace(main.settings, kiosk_token="wall-token"))
+    return TestClient(app)  # no session cookie
+
+
+def test_kiosk_token(kiosk):
+    r = kiosk.get("/kiosk?token=wall-token")
+    assert r.status_code == 200 and r.headers["referrer-policy"] == "no-referrer"
+    assert kiosk.get("/kiosk?token=nope", follow_redirects=False).headers["location"] == "/login"
+    assert kiosk.get("/kiosk", follow_redirects=False).headers["location"] == "/login"
+
+    T = {"X-Kiosk-Token": "wall-token"}
+    for path in ("/api/summary", "/api/plan", "/api/coach"):
+        assert kiosk.get(path, headers=T).status_code == 200
+    assert kiosk.get("/api/summary", headers={"X-Kiosk-Token": "nope"}).status_code == 401
+    # read-only, and only what the kiosk shows
+    assert kiosk.get("/api/settings", headers=T).status_code == 401
+    assert kiosk.get("/api/activities", headers=T).status_code == 401
+    assert kiosk.post("/api/coach/refresh", headers={**T, **H}).status_code == 401
+
+
+def test_kiosk_disabled_without_token_setting(client):
+    c = TestClient(app)
+    assert c.get("/kiosk?token=", follow_redirects=False).status_code == 303
+    assert c.get("/api/summary", headers={"X-Kiosk-Token": ""}).status_code == 401
+
+
+def test_kiosk_with_login(authed):
+    assert authed.get("/kiosk").status_code == 200

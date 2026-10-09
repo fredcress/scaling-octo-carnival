@@ -44,9 +44,21 @@ app.add_middleware(SessionMiddleware, secret_key=settings.secret_key, session_co
 
 # ------------------------------------------------------------------ auth
 
+# what the kiosk view reads; a kiosk token opens nothing else, and nothing that writes
+KIOSK_PATHS = {"/api/summary", "/api/plan", "/api/coach"}
+
+
+def kiosk_token_ok(token: str | None) -> bool:
+    return bool(settings.kiosk_token and token
+                and hmac.compare_digest(token.encode(), settings.kiosk_token.encode()))
+
+
 def require_user(request: Request) -> str:
     user = request.session.get("user")
     if not user:
+        if (kiosk_token_ok(request.headers.get("x-kiosk-token"))
+                and request.method in ("GET", "HEAD") and request.url.path in KIOSK_PATHS):
+            return "kiosk"
         raise HTTPException(401, "login required")
     if request.method not in ("GET", "HEAD") and request.headers.get("x-requested-with") != "fetch":
         raise HTTPException(403, "missing X-Requested-With header")
@@ -85,6 +97,23 @@ def index(request: Request):
     if not request.session.get("user"):
         return RedirectResponse("/login", status_code=303)
     return FileResponse(STATIC / "index.html")
+
+
+@app.get("/kiosk")
+def kiosk(request: Request, token: str | None = None):
+    """Wall-screen view: no navigation, refreshes itself. Opens with ?token=KIOSK_TOKEN
+    (read-only, no login, works inside another dashboard's iframe) or a normal login."""
+    if not (kiosk_token_ok(token) or request.session.get("user")):
+        return RedirectResponse("/login", status_code=303)
+    # the token is in the page URL: keep it out of Referer headers
+    return FileResponse(STATIC / "index.html", headers={"Referrer-Policy": "no-referrer"})
+
+
+@app.get("/sw.js")
+def service_worker():
+    # served from the root so it controls the whole app, which makes it installable
+    return FileResponse(STATIC / "sw.js", media_type="text/javascript",
+                        headers={"Cache-Control": "no-cache"})
 
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")

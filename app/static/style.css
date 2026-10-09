@@ -264,6 +264,16 @@ select.kind:hover { color: var(--ink-2); }
 .toast { position: fixed; bottom: 20px; right: 20px; background: var(--ink); color: var(--page); padding: 10px 16px; border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 2000; }
 .toast.show { opacity: 1; }
 
+/* ---------------------------------------------------------------- kiosk */
+.today-session { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 17px; margin-bottom: 4px; }
+.kiosk .app { grid-template-columns: 1fr; }
+.kiosk .nav, .kiosk button, .kiosk select, .kiosk .btn { display: none; }
+.kiosk a { pointer-events: none; color: inherit; }
+.kiosk main { max-width: none; padding: 20px 24px; }
+.kiosk .page-head { margin-bottom: 4px; }
+.kiosk-top { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); align-items: start; }
+.kiosk .kiosk-top > .grid > .card + .card { margin-top: 0; }
+
 /* ---------------------------------------------------------------- mobile */
 @media (max-width: 860px) {
   .app { grid-template-columns: 1fr; }
@@ -288,4 +298,6 @@ select.kind:hover { color: var(--ink-2); }
   .plan-week .wk { min-width: 0; }
   .plan-week summary .muted { display: none; }
   .phase { white-space: nowrap; }
+  .kiosk main { padding: 16px; }
+  .kiosk-top { grid-template-columns: 1fr; }
 }

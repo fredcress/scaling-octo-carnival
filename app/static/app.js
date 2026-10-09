@@ -8,13 +8,21 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
+// /kiosk: a single self-refreshing screen for a wall display or another dashboard's iframe
+const KIOSK = location.pathname === "/kiosk";
+const kioskParams = new URLSearchParams(location.search);
+const KIOSK_TOKEN = KIOSK ? kioskParams.get("token") : null;
+
 async function api(path, opts = {}) {
   const res = await fetch(path, {
     credentials: "same-origin",
     ...opts,
-    headers: { "X-Requested-With": "fetch", ...(opts.headers || {}) },
+    headers: { "X-Requested-With": "fetch", ...(KIOSK_TOKEN ? { "X-Kiosk-Token": KIOSK_TOKEN } : {}), ...(opts.headers || {}) },
   });
-  if (res.status === 401) { location.href = "/login"; throw new Error("login required"); }
+  if (res.status === 401) {
+    if (KIOSK) throw new Error("Not allowed: check the token in the kiosk URL against KIOSK_TOKEN.");
+    location.href = "/login"; throw new Error("login required");
+  }
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.detail || res.statusText);
   return body;
@@ -129,6 +137,11 @@ const routes = [
 
 async function route() {
   cleanup();
+  if (KIOSK) {
+    try { await renderKiosk(); }
+    catch (e) { view.innerHTML = `<div class="notice err">${icons.alert}${esc(e.message)}</div>`; }
+    return;
+  }
   const hash = location.hash.split("?")[0] || "#/";
   document.querySelectorAll(".nav a[data-route]").forEach((a) => {
     const r = a.dataset.route;
@@ -386,41 +399,17 @@ function emptyState() {
 async function renderDashboard() {
   const s = await api("/api/summary");
   if (!s.total_activities) { view.innerHTML = `<div class="page-head"><h1>Dashboard</h1></div>${emptyState()}`; return; }
-  const w = s.this_week, lw = s.last_week, cur = s.current || {};
   view.innerHTML = `
     <div class="page-head">
       <div><h1>Dashboard</h1><div class="sub">${fmt.date(s.today, { weekday: "long", day: "numeric", month: "long" })}</div></div>
       ${s.unsent ? `<a class="btn" href="#/activities">${icons.upload} ${s.unsent} not on Strava yet</a>` : ""}
     </div>
 
-    <div class="card">
-      <div class="hero">
-        <div>
-          <div class="sub">This week</div>
-          <div class="hero-value">${fmt.km(w.distance_m)}<small>km</small></div>
-          ${delta(w.distance_m / 1000, s.last_week_to_date.distance_m / 1000, { unit: " km vs this point last week" })}
-          <div class="delta">Last week: ${fmt.km(lw.distance_m)} km in ${lw.runs} runs</div>
-        </div>
-        <div class="side">
-          <div class="stat"><div class="label">Runs</div><div class="value">${w.runs}</div></div>
-          <div class="stat"><div class="label">Time</div><div class="value">${fmt.hours(w.moving_s)}</div></div>
-          <div class="stat"><div class="label">Avg pace</div><div class="value">${fmt.pace(w.pace_s_per_km)} /km</div></div>
-          <div class="stat"><div class="label">${new Date(s.today).toLocaleDateString(undefined, { month: "long" })}</div><div class="value">${fmt.km(s.this_month.distance_m, 0)} km</div><div class="delta">${s.this_month.runs} runs · ${fmt.hours(s.this_month.moving_s)}</div></div>
-          <div class="stat"><div class="label">${s.today.slice(0, 4)} so far</div><div class="value">${fmt.km(s.this_year.distance_m, 0)} km</div><div class="delta">${s.this_year.runs} runs · ${fmt.hours(s.this_year.moving_s)}</div></div>
-        </div>
-      </div>
-    </div>
+    ${heroCard(s)}
 
     ${readinessCard(s.readiness, { compact: true })}
     <div id="coach-slot"></div>
-    <div class="tiles">
-      <div class="card tile"><div class="label">Fitness</div><div class="value">${fmt.int(cur.ctl)}</div><div class="delta">42-day load average</div></div>
-      <div class="card tile"><div class="label">Fatigue</div><div class="value">${fmt.int(cur.atl)}</div><div class="delta">7-day load average</div></div>
-      <div class="card tile"><div class="label">Form</div><div class="value">${cur.tsb != null ? (cur.tsb > 0 ? "+" : "") + Math.round(cur.tsb) : "–"}</div><div class="delta">${formState(cur.tsb)}</div></div>
-      <div class="card tile"><div class="label">Pace, last 28 days</div><div class="value">${fmt.pace(s.pace_28d)}<small>/km</small></div>
-        ${delta(s.pace_28d, s.pace_prev_28d, { lowerIsBetter: true, unit: " vs prior 28 d", fmtFn: fmt.pace })}</div>
-      <div class="card tile"><div class="label">VO₂max (watch)</div><div class="value">${s.vo2max ? s.vo2max.value : "–"}</div><div class="delta">${s.vo2max ? "as of " + fmt.date(s.vo2max.date) : "not in FIT files yet"}</div></div>
-    </div>
+    ${tilesRow(s)}
 
     <div class="grid cols-2">
       <div class="card">
@@ -444,6 +433,47 @@ async function renderDashboard() {
       ${activityTable(s.recent)}
     </div>`;
 
+  drawDashboardCharts(s);
+  watchUploads();
+  mountCoach().catch(() => {});
+}
+
+function heroCard(s) {
+  const w = s.this_week, lw = s.last_week;
+  return `
+  <div class="card">
+    <div class="hero">
+      <div>
+        <div class="sub">This week</div>
+        <div class="hero-value">${fmt.km(w.distance_m)}<small>km</small></div>
+        ${delta(w.distance_m / 1000, s.last_week_to_date.distance_m / 1000, { unit: " km vs this point last week" })}
+        <div class="delta">Last week: ${fmt.km(lw.distance_m)} km in ${lw.runs} runs</div>
+      </div>
+      <div class="side">
+        <div class="stat"><div class="label">Runs</div><div class="value">${w.runs}</div></div>
+        <div class="stat"><div class="label">Time</div><div class="value">${fmt.hours(w.moving_s)}</div></div>
+        <div class="stat"><div class="label">Avg pace</div><div class="value">${fmt.pace(w.pace_s_per_km)} /km</div></div>
+        <div class="stat"><div class="label">${new Date(s.today).toLocaleDateString(undefined, { month: "long" })}</div><div class="value">${fmt.km(s.this_month.distance_m, 0)} km</div><div class="delta">${s.this_month.runs} runs · ${fmt.hours(s.this_month.moving_s)}</div></div>
+        <div class="stat"><div class="label">${s.today.slice(0, 4)} so far</div><div class="value">${fmt.km(s.this_year.distance_m, 0)} km</div><div class="delta">${s.this_year.runs} runs · ${fmt.hours(s.this_year.moving_s)}</div></div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function tilesRow(s) {
+  const cur = s.current || {};
+  return `
+  <div class="tiles">
+    <div class="card tile"><div class="label">Fitness</div><div class="value">${fmt.int(cur.ctl)}</div><div class="delta">42-day load average</div></div>
+    <div class="card tile"><div class="label">Fatigue</div><div class="value">${fmt.int(cur.atl)}</div><div class="delta">7-day load average</div></div>
+    <div class="card tile"><div class="label">Form</div><div class="value">${cur.tsb != null ? (cur.tsb > 0 ? "+" : "") + Math.round(cur.tsb) : "–"}</div><div class="delta">${formState(cur.tsb)}</div></div>
+    <div class="card tile"><div class="label">Pace, last 28 days</div><div class="value">${fmt.pace(s.pace_28d)}<small>/km</small></div>
+      ${delta(s.pace_28d, s.pace_prev_28d, { lowerIsBetter: true, unit: " vs prior 28 d", fmtFn: fmt.pace })}</div>
+    <div class="card tile"><div class="label">VO₂max (watch)</div><div class="value">${s.vo2max ? s.vo2max.value : "–"}</div><div class="delta">${s.vo2max ? "as of " + fmt.date(s.vo2max.date) : "not in FIT files yet"}</div></div>
+  </div>`;
+}
+
+function drawDashboardCharts(s) {
   const t = chartTheme();
   makeChart("c-weeks", {
     type: "bar",
@@ -489,8 +519,65 @@ async function renderDashboard() {
     },
     options: baseOptions(t, { xFmt: fmt.weekLabel }),
   });
-  watchUploads();
+}
+
+/* ================================================================ kiosk */
+
+function todayCard(p) {
+  if (!p || p.finished) return "";
+  const s = p.weeks.flatMap((w) => w.sessions).find((x) => x.date === p.today && x.status !== "dropped");
+  const race = `${esc(p.config.race_name || p.label)} in ${p.days_to_race} day${p.days_to_race === 1 ? "" : "s"}`;
+  return `<div class="card">
+    <div class="card-head"><h2>Today's plan</h2><span class="sub">${race}</span></div>
+    ${s ? `<div class="today-session"><i class="key" style="background:var(${SESSION_COLOR[s.type] || "--z1"})"></i>
+        <span class="act-name">${esc(s.title)}</span>${s.distance_km ? ` <span class="muted">${fmt.km(s.distance_km * 1000, 1)} km</span>` : ""}
+        ${sessionStatus(s)}</div><div class="sub">${esc(s.detail)}</div>`
+      : `<div class="today-session"><span class="act-name">Rest day</span></div>`}
+  </div>`;
+}
+
+async function renderKiosk() {
+  const [s, p] = await Promise.all([api("/api/summary"), api("/api/plan").catch(() => null)]);
+  const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const head = `<div class="page-head">
+      <div><h1>Runs</h1><div class="sub">${fmt.date(s.today, { weekday: "long", day: "numeric", month: "long" })}</div></div>
+      <span class="sub">Updated ${now}</span>
+    </div>`;
+  if (!s.total_activities) { view.innerHTML = head + emptyState(); return; }
+  const side = todayCard(p && p.plan) + readinessCard(s.readiness, { compact: true });
+  view.innerHTML = `${head}
+    ${side ? `<div class="grid kiosk-top">${heroCard(s)}<div class="grid">${side}</div></div>` : heroCard(s)}
+    <div id="coach-slot"></div>
+    ${tilesRow(s)}
+    <div class="grid cols-3">
+      <div class="card"><div class="card-head"><h2>Weekly distance</h2><span class="sub">last 26 weeks, km</span></div>
+        <div class="chart"><canvas id="c-weeks"></canvas></div></div>
+      <div class="card"><div class="card-head"><h2>Fitness &amp; fatigue</h2>
+          <div class="legend"><span><i class="key line" style="background:var(--series-1)"></i>Fitness</span><span><i class="key line" style="background:var(--series-2)"></i>Fatigue</span></div></div>
+        <div class="chart"><canvas id="c-fitness"></canvas></div></div>
+      <div class="card"><div class="card-head"><h2>Form</h2><span class="sub">positive = fresh</span></div>
+        <div class="chart"><canvas id="c-form"></canvas></div></div>
+    </div>`;
+  drawDashboardCharts(s);
   mountCoach().catch(() => {});
+}
+
+// keep a wall tablet's screen on (only works over HTTPS; ignored elsewhere)
+async function keepAwake() {
+  try { if (document.visibilityState === "visible") await navigator.wakeLock.request("screen"); } catch { /* not available */ }
+}
+
+if (KIOSK) {
+  document.body.classList.add("kiosk");
+  const theme = kioskParams.get("theme");
+  if (theme === "dark" || theme === "light") document.documentElement.dataset.theme = theme;
+  // ?refresh=<seconds>, default every 5 minutes
+  const every = Math.max(30, Number(kioskParams.get("refresh")) || 300);
+  setInterval(route, every * 1000);
+  keepAwake();
+  document.addEventListener("visibilitychange", keepAwake);
+} else if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
 }
 
 /* ================================================================ health */
