@@ -46,6 +46,8 @@ Garmin FR265 ──BLE──▶ Gadgetbridge (phone) ──Syncthing──▶ NA
 - **Heatmap** of every run.
 - **Push to Strava** button on every activity (runs, rides, walks…), with
   duplicate detection and a link to the Strava activity once uploaded.
+  Without Strava API access, **Upload on Strava** downloads the `.fit` and
+  opens Strava's upload page for you to drop it in.
 - Password login, light/dark theme from the OS, works on a phone and can be
   **installed as an app** (see below).
 - **Kiosk mode** at `/kiosk`: one self-refreshing screen for a wall tablet or
@@ -69,7 +71,14 @@ aren't activities (monitoring, sleep, settings…) are skipped and shown in
 Settings → Import log. Each imported file is copied into the data folder, so
 deleting it from the phone later is fine.
 
-### 2. Strava API app
+### 2. Strava API app (optional)
+
+Without API access, every activity gets an **Upload on Strava** button instead
+of **Push to Strava**. It downloads the `.fit` file and opens Strava's upload
+page in a new tab, where you're already logged in. Drop the file there (on a
+phone: *Choose file → Downloads*), then tap **Done, it's on Strava** back in the
+app. Skip the rest of this step in that case.
+
 
 1. Go to <https://www.strava.com/settings/api> and create an application.
 2. **Authorization Callback Domain**: the host you open the dashboard with,

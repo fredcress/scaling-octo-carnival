@@ -124,6 +124,13 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 api = Depends(require_user)
 
 
+@app.get("/api/me", dependencies=[api])
+def api_me():
+    st = strava.status()
+    # without API access the app helps with uploading by hand on strava.com instead
+    return {"strava_api": st["configured"] and st["connected"]}
+
+
 @app.get("/api/summary", dependencies=[api])
 def api_summary():
     return queries.summary()

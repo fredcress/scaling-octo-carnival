@@ -255,6 +255,8 @@ function rolling(values, n) {
 
 /* ================================================================ strava button */
 
+let STRAVA_API = false;  // set from /api/me at start-up
+
 function stravaCell(a, { big = false } = {}) {
   const cls = big ? "" : "small";
   switch (a.strava_status) {
@@ -270,7 +272,9 @@ function stravaCell(a, { big = false } = {}) {
     case "error":
       return `<span class="strava-cell"><button class="strava ${cls}" data-strava="${a.id}" title="${esc(a.strava_error)}">${icons.refresh} Retry Strava</button>${markButton(a, big)}</span>`;
     default:
-      return `<span class="strava-cell"><button class="strava ${cls}" data-strava="${a.id}">${icons.upload} Push to Strava</button>${markButton(a, big)}</span>`;
+      return STRAVA_API
+        ? `<span class="strava-cell"><button class="strava ${cls}" data-strava="${a.id}">${icons.upload} Push to Strava</button>${markButton(a, big)}</span>`
+        : `<span class="strava-cell"><button class="strava ${cls}" data-strava-by-hand="${a.id}" title="Downloads the .fit and opens Strava's upload page">${icons.upload} Upload on Strava</button>${markButton(a, big)}</span>`;
   }
 }
 
@@ -300,6 +304,31 @@ document.addEventListener("click", async (ev) => {
     btn.disabled = false;
     toast(e.message);
   }
+});
+
+/* without API access: download the .fit, open strava.com's upload page (where you're
+   logged in) to drop it in, then ask to tick it off here */
+document.addEventListener("click", (ev) => {
+  const btn = ev.target.closest("[data-strava-by-hand]");
+  if (!btn) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  const id = btn.dataset.stravaByHand;
+  const dl = document.createElement("a");
+  dl.href = `/api/activities/${id}/fit`;
+  dl.download = "";
+  document.body.append(dl);
+  dl.click();
+  dl.remove();
+  window.open("https://www.strava.com/upload/select", "_blank", "noopener");
+  const big = !btn.classList.contains("small");
+  const reopen = `href="https://www.strava.com/upload/select" target="_blank" rel="noopener"`;
+  btn.closest(".strava-cell").outerHTML = big
+    ? `<span class="strava-cell"><button data-strava-mark="${id}">${icons.check} Done, it's on Strava</button>
+        <a class="btn" ${reopen}>Reopen Strava</a></span>`
+    : `<span class="strava-cell"><button class="small" data-strava-mark="${id}">${icons.check} Done</button>
+        <a class="btn small icon" ${reopen} title="Reopen Strava's upload page">${icons.upload}</a></span>`;
+  toast("Drop the downloaded .fit file on Strava's upload page");
 });
 
 /* one delegated handler for every Push to Strava button on any page */
@@ -1521,8 +1550,10 @@ async function renderSettings() {
   if (off) off.onclick = async () => {
     if (!confirm("Disconnect Strava? Already uploaded activities stay on Strava.")) return;
     await api("/api/strava/disconnect", { method: "POST" });
+    STRAVA_API = false;
     route();
   };
 }
 
-route();
+if (KIOSK) route();
+else api("/api/me").then((me) => { STRAVA_API = me.strava_api; }).catch(() => {}).finally(route);

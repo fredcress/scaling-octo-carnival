@@ -87,6 +87,11 @@ def test_push_without_strava(authed):
     assert r.status_code == 400
 
 
+def test_me_without_strava_api(authed):
+    # no API access: the page offers "Upload on Strava" (by hand) instead of pushing
+    assert authed.get("/api/me").json() == {"strava_api": False}
+
+
 def test_fit_download(authed):
     aid = authed.get("/api/activities?kind=run").json()[0]["id"]
     r = authed.get(f"/api/activities/{aid}/fit")
