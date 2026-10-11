@@ -33,7 +33,8 @@ Garmin FR265 ──BLE──▶ Gadgetbridge (phone) ──Syncthing──▶ NA
 - **Coach note** (optional): a short daily note on the dashboard, written by a
   model on your own network (Ollama) from the numbers the app computes
   (readiness, last night, recent runs, today's planned session), plus a
-  **weekly review** of the last Monday–Sunday each week. Set
+  **weekly review** of the last Monday–Sunday each week (from Sunday 6 pm, or
+  as soon as Sunday's run is in, it reviews the week just ending). Set
   `OLLAMA_URL` and `OLLAMA_MODEL`; Ollama must listen beyond localhost
   (`OLLAMA_HOST=0.0.0.0`).
 - **Activity page**: OpenStreetMap route, pace / HR / elevation / cadence /

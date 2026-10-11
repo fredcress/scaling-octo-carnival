@@ -77,6 +77,53 @@ def test_weekly_review(ollama, monkeypatch):
     assert coach.state()["review"] is None  # a week later it's stale
 
 
+
+@pytest.fixture
+def sunday(imported, monkeypatch):
+    """Sunday 12 May 2030, with a run on the Wednesday of that week."""
+    sun = date(2030, 5, 12)
+    monkeypatch.setattr(queries, "today", lambda: sun)
+
+    def add_run(day: date, tag: str):
+        with connect() as c:
+            c.execute("INSERT INTO activities(file_hash, is_run, sport, start_utc, local_date, distance_m, trimp) "
+                      "VALUES(?, 1, 'running', ?, ?, 10000, 80)", (tag, f"{day}T08:00:00", day.isoformat()))
+
+    add_run(sun - timedelta(days=4), "test-wed")
+    yield sun, lambda: add_run(sun, "test-sun")
+    with connect() as c:
+        c.execute("DELETE FROM activities WHERE file_hash IN ('test-wed', 'test-sun')")
+
+
+def test_review_switches_to_this_week_on_sunday(sunday, monkeypatch):
+    sun, run_today = sunday
+    this_monday, last_monday = date(2030, 5, 6), date(2030, 4, 29)
+    monkeypatch.setattr(coach, "_local_hour", lambda: 17)
+    assert coach.review_week() == last_monday  # Sunday afternoon, no run yet: last week
+    assert "week_ends_today" not in (coach.week_facts() or {})
+    monkeypatch.setattr(coach, "_local_hour", lambda: 18)
+    assert coach.review_week() == this_monday  # from 6 pm: the week just ending
+    f = coach.week_facts()
+    assert f["week"] == "2030-05-06 to 2030-05-12" and f["week_ends_today"] is True
+    assert f["reviewed_week"]["runs"] == 1
+    monkeypatch.setattr(coach, "_local_hour", lambda: 9)
+    run_today()
+    assert coach.review_week() == this_monday  # Sunday's run is in: no need to wait
+    monkeypatch.setattr(queries, "today", lambda: sun + timedelta(days=1))
+    assert coach.review_week() == this_monday  # Monday: same week, now "last week"
+
+
+def test_review_card_says_this_week_on_sunday(ollama, sunday, monkeypatch):
+    sun, _ = sunday
+    monkeypatch.setattr(coach, "_local_hour", lambda: 19)
+    kv_delete("weekly_review")
+    coach.generate(what=("review",))
+    assert "week_ends_today" in coach.REVIEW_PROMPT
+    assert coach.state()["review"]["this_week"] is True
+    monkeypatch.setattr(queries, "today", lambda: sun + timedelta(days=1))
+    assert coach.state()["review"]["this_week"] is False  # same review, now last week's
+
+
 def test_thinking_is_stripped_and_old_ollama_retried(ollama):
     calls, replies = ollama
     replies += [Resp(400, {"error": "think value not supported"}),

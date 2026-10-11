@@ -10,7 +10,8 @@ import logging
 import re
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -22,6 +23,7 @@ log = logging.getLogger(__name__)
 
 MIN_INTERVAL_S = 600  # don't regenerate more often than this unless asked
 TIMEOUT_S = 300
+SUNDAY_SWITCH_HOUR = 18  # on Sunday, review the current week from this hour (or once Sunday's run is in)
 _lock = threading.Lock()
 
 SYSTEM_PROMPT = """You are a calm, experienced running coach writing a short morning note \
@@ -118,7 +120,7 @@ def facts() -> dict:
 
 
 REVIEW_PROMPT = """You are a calm, experienced running coach writing a short review of the \
-runner's last training week, from their watch data and training plan.
+runner's training week, from their watch data and training plan.
 
 Rules:
 - Use ONLY the facts in the JSON. Never invent numbers, sessions or events.
@@ -129,6 +131,8 @@ heart rate suggest about recovery, one thing that went well, one thing to watch,
 the coming week holds.
 - "reviewed_week" is the week you are reviewing; compare it with "week_before" only where \
 both have the figure.
+- If "week_ends_today" is true, the review is written on the Sunday: a session with status \
+"today" is not missed, the runner may still do it.
 - Do not give medical advice or diagnoses."""
 
 
@@ -153,10 +157,29 @@ def _week_summary(runs: list, health_rows: list) -> dict:
     return out
 
 
-def week_facts() -> dict | None:
-    """The last full Monday–Sunday week, with the one before for comparison."""
+def _local_hour() -> int:
+    return datetime.now(ZoneInfo(settings.tz)).hour
+
+
+def review_week() -> date:
+    """Monday of the week to review: the last full week, or the current one from Sunday
+    evening (earlier if Sunday's run is already in), when the week is as good as done."""
     t = queries.today()
-    start = queries.week_start(t) - timedelta(days=7)
+    this_monday = queries.week_start(t)
+    if t.weekday() == 6:
+        if _local_hour() >= SUNDAY_SWITCH_HOUR:
+            return this_monday
+        with connect() as conn:
+            if conn.execute("SELECT 1 FROM activities WHERE is_run = 1 AND local_date = ?",
+                            (t.isoformat(),)).fetchone():
+                return this_monday
+    return this_monday - timedelta(days=7)
+
+
+def week_facts() -> dict | None:
+    """The reviewed Monday–Sunday week (see review_week), with the one before for comparison."""
+    t = queries.today()
+    start = review_week()
     prev = start - timedelta(days=7)
     end = start + timedelta(days=6)
     with connect() as conn:
@@ -170,6 +193,7 @@ def week_facts() -> dict | None:
     if not this and not before:
         return None
     out = {"week": f"{start.isoformat()} to {end.isoformat()}",
+           **({"week_ends_today": True} if end == t else {}),
            "reviewed_week": _week_summary(this, in_week(health_rows, start)),
            "week_before": _week_summary(before, in_week(health_rows, prev))}
     out["reviewed_week"]["runs_list"] = [{"day": datetime.fromisoformat(r["local_date"]).strftime("%A"),
@@ -183,7 +207,7 @@ def week_facts() -> dict | None:
     if cfg:
         p = queries.plan_view(cfg)
         wk = next((w for w in p["weeks"] if w["start"] == start.isoformat()), None)
-        nxt = next((w for w in p["weeks"] if w["start"] == queries.week_start(t).isoformat()), None)
+        nxt = next((w for w in p["weeks"] if w["start"] == (start + timedelta(days=7)).isoformat()), None)
         if wk or nxt:
             out["plan"] = {"race": cfg.get("race_name") or p["label"], "race_date": cfg["race_date"],
                            "days_to_race": p["days_to_race"]}
@@ -290,9 +314,11 @@ def state() -> dict:
     if note and note.get("date") != queries.today().isoformat():
         note = None  # yesterday's note is stale
     review = kv_get("weekly_review")
-    last_week = queries.week_start(queries.today()) - timedelta(days=7)
-    if review and not review.get("week", "").startswith(last_week.isoformat()):
+    reviewed = review_week()
+    if review and not review.get("week", "").startswith(reviewed.isoformat()):
         review = None  # a review of an older week
+    elif review:
+        review["this_week"] = reviewed == queries.week_start(queries.today())
     return {"configured": settings.coach_configured, "model": settings.ollama_model or None,
             "url": settings.ollama_url or None, "note": note, "review": review,
             "writing": _lock.locked(), "status": kv_get("coach_status")}

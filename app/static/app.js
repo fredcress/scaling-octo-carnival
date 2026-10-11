@@ -651,7 +651,7 @@ function reviewCard(c) {
   if (!r) return "";
   const [from, to] = r.week.split(" to ");
   return `<div class="card coach">
-    <div class="card-head"><h2>Last week in review</h2>
+    <div class="card-head"><h2>${r.this_week ? "This" : "Last"} week in review</h2>
       <span class="coach-meta"><span class="sub">${fmt.date(from, { day: "numeric", month: "short" })} – ${fmt.date(to, { day: "numeric", month: "short" })}</span>
       <span class="pill" title="Written by ${esc(r.model)} from your runs, plan and health data">AI · ${esc(r.model)}</span>
       <button class="small icon" id="review-refresh" title="Rewrite the review" ${c.writing ? "disabled" : ""}>${icons.refresh}</button></span></div>
