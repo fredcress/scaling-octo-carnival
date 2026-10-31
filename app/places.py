@@ -3,7 +3,7 @@
 Runs that start within AREA_KM of an area's centre belong to it, so a home city and a
 holiday town get their own view instead of one map zoomed out across a continent.
 Names come from Nominatim (OpenStreetMap's place lookup), asked once per area with the
-centre rounded to ~10 km and kept in the database; PLACE_NAMES=false turns this off.
+centre rounded to ~1 km and kept in the database; PLACE_NAMES=false turns this off.
 """
 import logging
 import math
@@ -66,7 +66,7 @@ def _name_from(reply: dict) -> str | None:
 def name_for(lat: float, lon: float) -> str | None:
     """The place name for a point, from the cache or one Nominatim lookup."""
     global _last_failure
-    key = f"{round(lat, 1)},{round(lon, 1)}"
+    key = f"{round(lat, 2)},{round(lon, 2)}"
     cache = kv_get("place_names") or {}
     if key in cache:
         return cache[key]
@@ -74,7 +74,7 @@ def name_for(lat: float, lon: float) -> str | None:
         return None
     try:
         r = httpx.get(NOMINATIM, timeout=6, headers={"User-Agent": USER_AGENT}, params={
-            "lat": round(lat, 1), "lon": round(lon, 1), "zoom": 10,
+            "lat": round(lat, 2), "lon": round(lon, 2), "zoom": 10,
             "format": "jsonv2", "accept-language": "en"})
         r.raise_for_status()
         name = _name_from(r.json())
@@ -92,7 +92,7 @@ def named(areas: list[dict]) -> list[dict]:
     asked = False
     for i, a in enumerate(areas):
         lat, lon = a["centre"]
-        new = f"{round(lat, 1)},{round(lon, 1)}" not in (kv_get("place_names") or {})
+        new = f"{round(lat, 2)},{round(lon, 2)}" not in (kv_get("place_names") or {})
         if new and asked:
             time.sleep(1)  # Nominatim allows one request a second
         a["name"] = name_for(lat, lon) or f"Area {i + 1}"

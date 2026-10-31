@@ -30,9 +30,8 @@ def nominatim(imported, monkeypatch):
     monkeypatch.setattr(places.time, "sleep", lambda s: None)
     kv_delete("place_names")
     calls = []
-    replies = {(51.5, -0.1): {"address": {"city": "Greater London", "country": "United Kingdom"}},
-               (51.5, -0.2): {"address": {"city": "Greater London"}},
-               (45.8, 4.8): {"address": {"village": "Saint-Didier", "municipality": "Lyon"}}}
+    replies = {(51.51, -0.13): {"address": {"city": "Greater London", "country": "United Kingdom"}},
+               (45.76, 4.84): {"address": {"village": "Saint-Didier", "municipality": "Lyon"}}}
 
     def get(url, params=None, headers=None, timeout=None):
         calls.append(params)
@@ -60,7 +59,7 @@ def test_names_are_looked_up_once(nominatim):
     calls = nominatim
     areas = places.named(places.group([LONDON, LONDON, LYON]))
     assert [a["name"] for a in areas] == ["London", "Lyon"]
-    assert all(p["lat"] == round(p["lat"], 1) for p in calls)  # only a rounded point is sent
+    assert all(p["lat"] == round(p["lat"], 2) for p in calls)  # only a ~1 km rounded point is sent
     n = len(calls)
     places.named(places.group([LONDON, LYON]))
     assert len(calls) == n  # cached
