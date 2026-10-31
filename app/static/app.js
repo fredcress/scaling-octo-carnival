@@ -339,7 +339,10 @@ document.addEventListener("click", async (ev) => {
   if (!btn) return;
   ev.preventDefault();
   ev.stopPropagation();
-  toast(await copyText(btn.dataset.copyTitle) ? "Title copied" : `Couldn't copy: ${btn.dataset.copyTitle}`);
+  const ok = await copyText(btn.dataset.copyTitle);
+  toast(ok ? "Title copied" : `Couldn't copy: ${btn.dataset.copyTitle}`);
+  const state = btn.parentElement && btn.parentElement.querySelector(".copy-state");
+  if (state && ok) state.outerHTML = `<span class="pill good copy-state">${icons.check} Title copied</span>`;
 });
 
 /* without API access: copy the title, download the .fit, open strava.com's upload page
@@ -364,9 +367,12 @@ document.addEventListener("click", async (ev) => {
   window.open("https://www.strava.com/upload/select", "_blank", "noopener");
   const big = !btn.classList.contains("small");
   const reopen = `href="https://www.strava.com/upload/select" target="_blank" rel="noopener"`;
+  // a note that stays: the toast is hidden behind Strava's page by the time you look
   const copy = title ? (big
     ? `<button data-copy-title="${esc(title)}">${icons.pencil} Copy title</button>`
-    : `<button class="small icon" data-copy-title="${esc(title)}" title="Copy the title again">${icons.pencil}</button>`) : "";
+    : `<button class="small icon" data-copy-title="${esc(title)}" title="Copy the title again">${icons.pencil}</button>`)
+    + (copied ? `<span class="pill good copy-state">${icons.check} Title copied</span>`
+              : `<span class="pill err copy-state">${icons.alert} Not copied: tap ${icons.pencil}</span>`) : "";
   btn.closest(".strava-cell").outerHTML = big
     ? `<span class="strava-cell"><button data-strava-mark="${id}">${icons.check} Done, it's on Strava</button>
         ${copy}<a class="btn" ${reopen}>Reopen Strava</a></span>`

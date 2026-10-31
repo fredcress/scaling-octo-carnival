@@ -140,6 +140,17 @@ def test_write_title_and_keep_it(llm):
     assert "Rainy Riverside Shuffle" in json.loads(sent[1]["messages"][1]["content"])["recent_titles"]
 
 
+def test_notes_say_what_is_longest_and_are_not_titles(llm, monkeypatch):
+    _, replies, _ = llm
+    aid = run_id()
+    monkeypatch.setattr(titles, "_compare", lambda conn, a: ["longest run ever"])
+    assert titles.facts(aid)["compared_with_usual"] == ["longest run ever"]
+    replies.append(Resp(200, {"message": {"content": "Longest run ever."}}))
+    with pytest.raises(ValueError, match="one of the notes"):
+        titles.write_title(aid)
+    assert titles.write_title(aid) == "Rainy Riverside Shuffle"
+
+
 def test_bad_answers_are_retried_then_left(llm):
     _, replies, _ = llm
     aid = run_id()

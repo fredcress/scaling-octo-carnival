@@ -32,6 +32,8 @@ for the activity described in the JSON.
 
 Rules:
 - Use only the facts in the JSON. Never invent places, people, weather or events.
+- "compared_with_usual" and "personal_records" are notes about this activity, not titles: build on them in your own words, never copy one as the title.
+- Only mention an occasion if "occasion" names it. "Longest" in the notes is about distance, never about the day.
 - Let the activity set the tone. An ordinary run gets a short title, plain or a little wry. \
 Go poetic or playful only when something stands out: an occasion, striking weather, \
 darkness, a sunrise or sunset, a personal record, an unusually long or hard effort, a race.
@@ -173,6 +175,7 @@ def weather_for(a: dict) -> dict | None:
 def _compare(conn, a: dict) -> list[str]:
     """What stands out against the runner's usual: distance, pace, a long gap."""
     notes = []
+    kind = sport_label(a["sport"], a["sub_sport"] or "generic").lower()  # "run", "trail run"…
     prior = conn.execute(
         "SELECT start_utc, distance_m, moving_s FROM activities WHERE sport = ? AND start_utc < ? "
         "AND id != ? ORDER BY start_utc DESC", (a["sport"], a["start_utc"], a["id"])).fetchall()
@@ -181,14 +184,14 @@ def _compare(conn, a: dict) -> list[str]:
     start = datetime.fromisoformat(a["start_utc"])
     longer = next((p for p in prior if (p["distance_m"] or 0) >= a["distance_m"]), None)
     if longer is None:
-        notes.append("longest ever")
+        notes.append(f"longest {kind} ever")
     else:
         weeks = (start - datetime.fromisoformat(longer["start_utc"])).days // 7
         if weeks >= 4:
-            notes.append(f"longest in {weeks} weeks")
+            notes.append(f"longest {kind} in {weeks} weeks")
     gap = (start - datetime.fromisoformat(prior[0]["start_utc"])).days
     if gap >= 5:
-        notes.append(f"first in {gap} days")
+        notes.append(f"first {kind} in {gap} days")
     if a["is_run"] and a["moving_s"]:
         cutoff = (start - timedelta(days=90)).isoformat()
         paces = [p["moving_s"] / p["distance_m"] * 1000 for p in prior
@@ -196,7 +199,7 @@ def _compare(conn, a: dict) -> list[str]:
         if len(paces) >= 5:
             diff = a["moving_s"] / a["distance_m"] * 1000 - statistics.median(paces)
             if abs(diff) >= 10:
-                notes.append(f"{abs(round(diff))} s/km {'slower' if diff > 0 else 'faster'} than usual")
+                notes.append(f"pace {abs(round(diff))} s/km {'slower' if diff > 0 else 'faster'} than usual")
     return notes
 
 
@@ -296,7 +299,11 @@ def write_title(activity_id: int, wait: float = 0) -> str:
         raise RuntimeError("the model is busy with another title, try again in a minute")
     try:
         try:
-            title = clean(coach.ask_model(facts(activity_id), TITLE_PROMPT, temperature=0.9))
+            f = facts(activity_id)
+            title = clean(coach.ask_model(f, TITLE_PROMPT, temperature=0.9))
+            notes = {n.lower() for n in f.get("compared_with_usual", []) + f.get("personal_records", [])}
+            if title.lower() in notes:  # a note copied as the title, e.g. "Longest run ever"
+                raise ValueError(f"not a usable title: {title!r} is one of the notes")
         except Exception as e:
             with connect() as conn:
                 conn.execute("UPDATE activities SET title_tries = title_tries + 1 WHERE id = ?",
