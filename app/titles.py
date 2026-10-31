@@ -22,7 +22,6 @@ from .fitimport import sport_label
 
 log = logging.getLogger(__name__)
 
-AUTO_DAYS = 7  # new activities from the last week get a title on their own
 MAX_TRIES = 3  # automatic attempts per activity before giving up
 MAX_LEN = 80
 _model = threading.Lock()  # one title request at a time
@@ -322,7 +321,8 @@ def set_title(activity_id: int, title: str) -> None:
 
 
 def pending(all_dates: bool = False) -> list[int]:
-    since = (queries.today() - timedelta(days=AUTO_DAYS)).isoformat()
+    # activities from the last TITLE_DAYS days get a title on their own
+    since = (queries.today() - timedelta(days=settings.title_days)).isoformat()
     with connect() as conn:
         return [r["id"] for r in conn.execute(
             "SELECT id FROM activities WHERE title_source IS NULL AND title_tries < ? "
@@ -372,4 +372,5 @@ def state() -> dict:
     with connect() as conn:
         waiting = conn.execute("SELECT COUNT(*) FROM activities WHERE title_source IS NULL").fetchone()[0]
     return {"configured": settings.coach_configured, "weather": settings.weather,
+            "title_days": settings.title_days,
             "running": _worker.locked(), "untitled": waiting, "status": kv_get("titles_status")}

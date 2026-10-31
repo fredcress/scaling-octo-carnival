@@ -34,6 +34,7 @@ class Settings:
     ollama_model: str = ""
     kiosk_token: str = ""
     weather: bool = True
+    title_days: int = 7
 
     @property
     def coach_configured(self) -> bool:
@@ -92,6 +93,7 @@ def load_settings() -> Settings:
         ollama_model=os.environ.get("OLLAMA_MODEL", "").strip(),
         kiosk_token=os.environ.get("KIOSK_TOKEN", "").strip(),
         weather=os.environ.get("WEATHER", "true").lower() not in ("0", "false", "no", "off"),
+        title_days=max(0, int(_float("TITLE_DAYS", 7))),
     )
 
 

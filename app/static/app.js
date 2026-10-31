@@ -1589,7 +1589,7 @@ async function renderSettings() {
           <dt>Titles</dt><dd>${titlesText(s.titles)}</dd>
           <dt>Weather</dt><dd>${s.titles.weather ? "from Open-Meteo, for titles (sends a ~1 km rounded start point)" : "off (<code>WEATHER=false</code>)"}</dd>
         </dl>
-        <p class="sub">New activities get a title on their own. ${s.titles.untitled
+        <p class="sub">Activities from the last ${s.titles.title_days} day${s.titles.title_days === 1 ? "" : "s"} get a title on their own (<code>TITLE_DAYS</code>). ${s.titles.untitled
           ? `<button class="small" id="titles-backfill" ${s.titles.running ? "disabled" : ""}>${icons.sparkle} Title the other ${s.titles.untitled}</button>` : ""}</p>`
         : `<p class="sub">Set <code>OLLAMA_URL</code> and <code>OLLAMA_MODEL</code> in <code>.env</code> to get a short daily note on the dashboard, written by a model running on your own network from the numbers the app computes.</p>`}
     </div>

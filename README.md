@@ -174,6 +174,7 @@ HTTPS too, or the browser blocks the iframe.
 | `KIOSK_TOKEN` | — | Enables `/kiosk?token=…` without a login. See Kiosk mode. |
 | `OLLAMA_URL` / `OLLAMA_MODEL` | — | Local model for the coach note and activity titles. |
 | `WEATHER` | `true` | Weather in activity titles, from Open-Meteo. `false` turns it off. |
+| `TITLE_DAYS` | 7 | Untitled activities from the last N days get an AI title on their own. |
 
 After changing `MAX_HR` or `RESTING_HR`: restart, then **Settings →
 Recalculate all**.

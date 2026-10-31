@@ -162,6 +162,17 @@ def test_new_activities_get_titles(llm):
         assert {r["title_source"] for r in conn.execute("SELECT title_source FROM activities")} == {"ai"}
 
 
+def test_title_days(llm, monkeypatch):
+    with connect() as conn:
+        conn.execute("UPDATE activities SET local_date = '2020-01-01' WHERE file_name = 'walk.fit'")
+    try:
+        assert len(titles.pending()) == 2  # the walk is too old for the default 7 days
+        monkeypatch.setattr(titles, "settings", dataclasses.replace(titles.settings, title_days=99999))
+        assert len(titles.pending()) == 3
+    finally:
+        reprocess(run_id("walk.fit"))  # puts its real date back
+
+
 def test_unreachable_model_stops_the_loop(llm, monkeypatch):
     calls = []
 
