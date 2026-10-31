@@ -70,7 +70,8 @@ def test_trends_records_heatmap_settings(authed):
     r = authed.get("/api/records").json()
     five_k = next(p for p in r["predictions"] if p["distance_m"] == 5000)
     assert five_k["time_s"] > 0
-    assert len(authed.get("/api/heatmap").json()) == 2
+    hm = authed.get("/api/heatmap").json()
+    assert len(hm["lines"]) == 2 and sum(a["count"] for a in hm["areas"]) == 2
     st = authed.get("/api/settings").json()
     assert st["strava"] == {"configured": False, "connected": False, "athlete": None}
     assert any(x["status"] == "error" for x in st["import_log"])

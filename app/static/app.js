@@ -1519,9 +1519,17 @@ async function renderRecords() {
 /* ================================================================ heatmap */
 
 async function renderHeatmap() {
-  const lines = await api("/api/heatmap");
+  const { lines, areas } = await api("/api/heatmap");
+  // one button per area (city) when runs are spread out; the choice is remembered per device
+  const AREA_KEY = "heatmap-area";
+  let saved = null;
+  try { saved = localStorage.getItem(AREA_KEY); } catch { saved = null; }
+  let pick = saved === "all" ? "all" : Math.max(0, areas.findIndex((a) => a.name === saved));
   view.innerHTML = `
-    <div class="page-head"><div><h1>Heatmap</h1><div class="sub">${lines.length} runs with GPS</div></div></div>
+    <div class="page-head"><div><h1>Heatmap</h1><div class="sub">${lines.length} runs with GPS</div></div>
+      ${areas.length > 1 ? `<div class="seg wrap" id="areas">${areas.map((a, i) =>
+        `<button data-area="${i}">${esc(a.name)} <span class="muted">${a.count}</span></button>`).join("")}
+        <button data-area="all">All</button></div>` : ""}</div>
     <div class="card" style="padding:8px"><div class="map full" id="hmap"></div></div>`;
   const m = L.map("hmap");
   maps.push(m);
@@ -1534,7 +1542,21 @@ async function renderHeatmap() {
     radius: 6, blur: 8, minOpacity: 0.35, max: 1,
     gradient: { 0.2: "#9ec5f4", 0.5: "#3987e5", 0.8: "#1c5cab", 1.0: "#0d366b" },
   }).addTo(m);
-  m.fitBounds(L.latLngBounds(pts), { padding: [20, 20] });
+  const show = (which) => {
+    pick = which;
+    document.querySelectorAll("#areas [data-area]").forEach((b) => b.classList.toggle("on", b.dataset.area === String(which)));
+    const bounds = which === "all" || !areas[which] ? L.latLngBounds(pts) : L.latLngBounds(areas[which].bounds);
+    m.fitBounds(bounds, { padding: [20, 20], maxZoom: 15 });
+  };
+  show(pick);
+  const seg = $("#areas");
+  if (seg) seg.onclick = (ev) => {
+    const b = ev.target.closest("[data-area]");
+    if (!b) return;
+    const which = b.dataset.area === "all" ? "all" : Number(b.dataset.area);
+    show(which);
+    try { localStorage.setItem(AREA_KEY, which === "all" ? "all" : areas[which].name); } catch { /* private mode */ }
+  };
 }
 
 /* ================================================================ settings */

@@ -4,7 +4,7 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from . import adapt, plan
+from . import adapt, places, plan
 from . import analytics as an
 from .config import settings
 from .db import connect, kv_get, unpack_streams
@@ -361,10 +361,12 @@ def health(days: int = 120) -> dict:
             "configured": settings.gadgetbridge_dir.is_dir()}
 
 
-def heatmap() -> list:
+def heatmap() -> dict:
+    """Every run's route, plus the areas they fall in (biggest first) for the map to open on."""
     with connect() as conn:
-        return [json.loads(r["polyline"]) for r in conn.execute(
-            "SELECT polyline FROM activities WHERE is_run = 1 AND polyline IS NOT NULL")]
+        lines = [json.loads(r["polyline"]) for r in conn.execute(
+            "SELECT polyline FROM activities WHERE is_run = 1 AND polyline IS NOT NULL ORDER BY start_utc")]
+    return {"lines": lines, "areas": places.named(places.group(lines))}
 
 
 def import_log(limit: int = 50) -> list[dict]:

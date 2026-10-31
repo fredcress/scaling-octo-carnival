@@ -54,7 +54,9 @@ Garmin FR265 ──BLE──▶ Gadgetbridge (phone) ──Syncthing──▶ NA
   10-run average, weekly time in HR zones, cadence, VO₂max.
 - **Records**: fastest 1 km / mile / 5 km / 10 km / half / marathon found
   *inside* any run, top 5 each, plus race predictions.
-- **Heatmap** of every run.
+- **Heatmap** of every run, grouped by area: it opens on the city you run in most, with a
+  button per place (London, Lyon…) and **All**. Runs starting within 50 km of each other
+  share an area; names come from OpenStreetMap (see `PLACE_NAMES`).
 - **Push to Strava** button on every activity (runs, rides, walks…), with
   duplicate detection and a link to the Strava activity once uploaded.
   Without Strava API access, **Upload on Strava** downloads the `.fit` and
@@ -175,6 +177,7 @@ HTTPS too, or the browser blocks the iframe.
 | `OLLAMA_URL` / `OLLAMA_MODEL` | — | Local model for the coach note and activity titles. |
 | `WEATHER` | `true` | Weather in activity titles, from Open-Meteo. `false` turns it off. |
 | `TITLE_DAYS` | 7 | Untitled activities from the last N days get an AI title on their own. |
+| `PLACE_NAMES` | `true` | Names heatmap areas with OpenStreetMap (centre rounded to ~10 km). `false` shows "Area 1"… |
 
 After changing `MAX_HR` or `RESTING_HR`: restart, then **Settings →
 Recalculate all**.

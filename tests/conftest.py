@@ -22,6 +22,7 @@ os.environ.update({
     "TZ": "Europe/Paris",
     "STRAVA_CLIENT_ID": "",
     "STRAVA_CLIENT_SECRET": "",
+    "PLACE_NAMES": "false",  # tests never ask OpenStreetMap; test_places fakes it
 })
 (_tmp / "watch").mkdir(parents=True)
 

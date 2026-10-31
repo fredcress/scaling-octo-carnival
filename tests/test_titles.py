@@ -151,6 +151,20 @@ def test_notes_say_what_is_longest_and_are_not_titles(llm, monkeypatch):
     assert titles.write_title(aid) == "Rainy Riverside Shuffle"
 
 
+def test_milestones():
+    import sqlite3
+    conn = sqlite3.connect(":memory:")
+    conn.executescript("CREATE TABLE activities(id, start_utc); CREATE TABLE best_efforts(activity_id, distance_m);"
+                       "INSERT INTO activities VALUES (1, '2026-01-01'); INSERT INTO best_efforts VALUES (1, 21097.5);")
+    run = lambda km, start="2026-06-01": {"is_run": 1, "distance_m": km * 1000, "start_utc": start}  # noqa: E731
+    assert titles._milestones(conn, run(21.2)) == ["half marathon distance"]
+    assert titles._milestones(conn, run(21.2, "2025-01-01")) == ["first half marathon in your records"]
+    assert titles._milestones(conn, run(25)) == []  # well past it: the "longest" notes cover that
+    assert titles._milestones(conn, run(42.3)) == ["first marathon in your records"]
+    assert titles._milestones(conn, run(15)) == []
+    assert titles._milestones(conn, {**run(21.2), "is_run": 0}) == []
+
+
 def test_bad_answers_are_retried_then_left(llm):
     _, replies, _ = llm
     aid = run_id()

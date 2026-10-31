@@ -32,15 +32,24 @@ for the activity described in the JSON.
 
 Rules:
 - Use only the facts in the JSON. Never invent places, people, weather or events.
-- "compared_with_usual" and "personal_records" are notes about this activity, not titles: build on them in your own words, never copy one as the title.
-- Only mention an occasion if "occasion" names it. "Longest" in the notes is about distance, never about the day.
+- "milestones", "compared_with_usual" and "personal_records" are notes about this \
+activity, not titles: build on them in your own words, never copy one as the title.
+- Only mention an occasion if "occasion" names it. "Longest" in the notes is about \
+distance, never about the day.
 - Let the activity set the tone. An ordinary run gets a short title, plain or a little wry. \
 Go poetic or playful only when something stands out: an occasion, striking weather, \
 darkness, a sunrise or sunset, a personal record, an unusually long or hard effort, a race.
+- A big day (anything in "milestones", a personal record, the longest run ever, race day) \
+deserves a proud, memorable title, not a status report.
 - At most 60 characters. No quotation marks, hashtags or emoji, no full stop at the end.
 - Never a generic name like "Morning Run" or "Evening Ride", and don't repeat the wording \
 of recent_titles.
-- British English. Reply with the title only."""
+- British English. Reply with the title only.
+
+Examples of the range, for tone only (never reuse them): an ordinary easy run in drizzle \
+"Tuesday legs, Tuesday drizzle"; a dark winter evening "Headtorch weather"; a new 5 km \
+record "Five kilometres, new best, no regrets"; a first half marathon on a sunny morning \
+"Twenty-one point one and a golden sky"."""
 
 GENERIC = re.compile(r"^(early )?(morning|lunch|afternoon|evening|night) [a-z -]+$", re.I)
 
@@ -216,6 +225,27 @@ def _prs(conn, a: dict) -> list[str]:
     return out
 
 
+# race distances a run can "cover": (metres, name)
+RACE_DISTANCES = [(21097.5, "half marathon"), (42195, "marathon")]
+
+
+def _milestones(conn, a: dict) -> list[str]:
+    """A run that covers a half or full marathon, flagged as the first in the records if so."""
+    out = []
+    dist = a["distance_m"] or 0
+    for metres, name in RACE_DISTANCES:
+        if not a["is_run"] or dist < metres * 0.995:
+            continue
+        earlier = conn.execute(
+            "SELECT 1 FROM best_efforts b JOIN activities x ON x.id = b.activity_id "
+            "WHERE b.distance_m = ? AND x.start_utc < ? LIMIT 1", (metres, a["start_utc"])).fetchone()
+        if not earlier:
+            out.append(f"first {name} in your records")
+        elif dist <= metres * 1.06:
+            out.append(f"{name} distance")
+    return out[-1:]  # a marathon also covers a half: only say the bigger one
+
+
 def _planned(a: dict) -> dict | None:
     cfg = kv_get("plan")
     if not cfg:
@@ -246,6 +276,7 @@ def facts(activity_id: int) -> dict:
         a = dict(conn.execute("SELECT * FROM activities WHERE id = ?", (activity_id,)).fetchone())
         compare = _compare(conn, a)
         prs = _prs(conn, a) if a["is_run"] else []
+        milestones = _milestones(conn, a)
         recent = [r["name"] for r in conn.execute(
             "SELECT name FROM activities WHERE title_source IS NOT NULL AND id != ? "
             "ORDER BY start_utc DESC LIMIT 8", (activity_id,))]
@@ -261,7 +292,7 @@ def facts(activity_id: int) -> dict:
         "pace": _pace(a["moving_s"] / km) if a["is_run"] and km else None,
         "elevation_gain_m": round(a["ascent_m"]) if a["ascent_m"] and a["ascent_m"] >= 50 else None,
         "effort": _effort(a["avg_hr"]),
-        "compared_with_usual": compare, "personal_records": prs,
+        "milestones": milestones, "compared_with_usual": compare, "personal_records": prs,
         "planned": _planned(a),
     }
     w = weather_for(a)
@@ -301,7 +332,8 @@ def write_title(activity_id: int, wait: float = 0) -> str:
         try:
             f = facts(activity_id)
             title = clean(coach.ask_model(f, TITLE_PROMPT, temperature=0.9))
-            notes = {n.lower() for n in f.get("compared_with_usual", []) + f.get("personal_records", [])}
+            notes = {n.lower() for k in ("milestones", "compared_with_usual", "personal_records")
+                     for n in f.get(k, [])}
             if title.lower() in notes:  # a note copied as the title, e.g. "Longest run ever"
                 raise ValueError(f"not a usable title: {title!r} is one of the notes")
         except Exception as e:

@@ -35,6 +35,7 @@ class Settings:
     kiosk_token: str = ""
     weather: bool = True
     title_days: int = 7
+    place_names: bool = True
 
     @property
     def coach_configured(self) -> bool:
@@ -94,6 +95,7 @@ def load_settings() -> Settings:
         kiosk_token=os.environ.get("KIOSK_TOKEN", "").strip(),
         weather=os.environ.get("WEATHER", "true").lower() not in ("0", "false", "no", "off"),
         title_days=max(0, int(_float("TITLE_DAYS", 7))),
+        place_names=os.environ.get("PLACE_NAMES", "true").lower() not in ("0", "false", "no", "off"),
     )
 
 
