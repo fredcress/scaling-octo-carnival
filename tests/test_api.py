@@ -87,6 +87,13 @@ def test_push_without_strava(authed):
     assert r.status_code == 400
 
 
+def test_index_busts_asset_cache(authed):
+    r = authed.get("/")
+    assert r.status_code == 200 and r.headers["cache-control"] == "no-cache"
+    assert '"/static/app.js?v=' in r.text and '"/static/style.css?v=' in r.text
+    assert authed.get("/static/app.js?v=1").status_code == 200
+
+
 def test_me_without_strava_api(authed):
     # no API access: the page offers "Upload on Strava" (by hand) instead of pushing
     assert authed.get("/api/me").json() == {"strava_api": False, "ai_titles": False}

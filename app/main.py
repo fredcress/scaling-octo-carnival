@@ -8,7 +8,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
@@ -22,6 +22,19 @@ from .fitimport import reprocess
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
 STATIC = Path(__file__).parent / "static"
+
+
+def _index_html() -> str:
+    """index.html with ?v=<start time> on the script and stylesheet, so phones fetch
+    the new ones after an update instead of a cached copy."""
+    v = str(int(time.time()))
+    html = (STATIC / "index.html").read_text()
+    for asset in ("/static/app.js", "/static/style.css"):
+        html = html.replace(f'"{asset}"', f'"{asset}?v={v}"')
+    return html
+
+
+INDEX_HTML = _index_html()
 
 
 @asynccontextmanager
@@ -96,7 +109,7 @@ def healthz():
 def index(request: Request):
     if not request.session.get("user"):
         return RedirectResponse("/login", status_code=303)
-    return FileResponse(STATIC / "index.html")
+    return HTMLResponse(INDEX_HTML, headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/kiosk")
@@ -106,7 +119,7 @@ def kiosk(request: Request, token: str | None = None):
     if not (kiosk_token_ok(token) or request.session.get("user")):
         return RedirectResponse("/login", status_code=303)
     # the token is in the page URL: keep it out of Referer headers
-    return FileResponse(STATIC / "index.html", headers={"Referrer-Policy": "no-referrer"})
+    return HTMLResponse(INDEX_HTML, headers={"Referrer-Policy": "no-referrer", "Cache-Control": "no-cache"})
 
 
 @app.get("/sw.js")
