@@ -114,7 +114,7 @@ def activity(activity_id: int) -> dict | None:
         prs = {r["distance_m"]: r["best"] for r in conn.execute(
             "SELECT distance_m, MIN(time_s) AS best FROM best_efforts GROUP BY distance_m")}
     out = dict(a)
-    for key in ("hr_zones", "splits", "laps", "polyline"):
+    for key in ("hr_zones", "splits", "laps", "polyline", "weather"):
         out[key] = json.loads(out[key]) if out[key] else None
     out.pop("stored_path", None)
     out["streams"] = unpack_streams(s["data"] if s else None)

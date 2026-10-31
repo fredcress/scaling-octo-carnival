@@ -260,6 +260,10 @@ select.kind:hover { color: var(--ink-2); }
 .readiness p { margin: 0 0 6px; }
 .coach-text { margin: 0 0 8px; font-size: 15px; line-height: 1.55; }
 .coach-meta { display: inline-flex; gap: 6px; align-items: center; }
+.act-title .title-tools { display: inline-flex; gap: 4px; margin-left: 8px; vertical-align: middle; }
+.act-title .title-tools button { color: var(--ink-2); }
+button.busy svg { animation: spin 1.2s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .readiness .flags { margin: 4px 0 0; padding-left: 18px; color: var(--ink-2); font-size: 14px; }
 .toast { position: fixed; bottom: 20px; right: 20px; background: var(--ink); color: var(--page); padding: 10px 16px; border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 2000; }
 .toast.show { opacity: 1; }

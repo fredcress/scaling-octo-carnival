@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import coach, health
+from . import coach, health, titles
 from .config import settings
 from .db import connect, kv_set
 from .fitimport import import_file
@@ -73,6 +73,10 @@ def run_forever() -> None:
             health.import_once()
         except Exception:
             log.exception("health import failed")
+        try:
+            titles.run_in_background()  # titles for new activities, if any
+        except Exception:
+            log.exception("titles failed")
         try:
             coach.generate_in_background()  # no-op unless the facts changed
         except Exception:

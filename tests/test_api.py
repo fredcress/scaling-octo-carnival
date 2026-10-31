@@ -89,7 +89,7 @@ def test_push_without_strava(authed):
 
 def test_me_without_strava_api(authed):
     # no API access: the page offers "Upload on Strava" (by hand) instead of pushing
-    assert authed.get("/api/me").json() == {"strava_api": False}
+    assert authed.get("/api/me").json() == {"strava_api": False, "ai_titles": False}
 
 
 def test_fit_download(authed):
@@ -98,20 +98,6 @@ def test_fit_download(authed):
     assert r.status_code == 200 and r.content[8:12] == b".FIT"
     assert ".fit" in r.headers["content-disposition"]
     assert authed.get("/api/activities/99999/fit").status_code == 404
-
-
-def test_fit_download_with_title(authed):
-    aid = authed.get("/api/activities?kind=run").json()[0]["id"]
-    plain = authed.get(f"/api/activities/{aid}/fit").content
-    r = authed.get(f"/api/activities/{aid}/fit", params={"title": "Ghosts Along the Riverbank"})
-    assert r.status_code == 200 and r.content[8:12] == b".FIT"
-    assert b"Ghosts Along the Riverbank\0" in r.content and r.content != plain
-    assert ".fit" in r.headers["content-disposition"]
-    both = authed.get(f"/api/activities/{aid}/fit", params={"title": "Boo", "into": "both"}).content
-    assert both.count(b"Boo\0") == 2
-    assert authed.get(f"/api/activities/{aid}/fit", params={"title": "x", "into": "nope"}).status_code == 422
-    assert authed.get(f"/api/activities/{aid}/fit", params={"title": "  "}).content == plain
-    assert authed.get(f"/api/activities/{aid}/fit").content == plain  # the archive is untouched
 
 
 def test_mark_on_strava_by_hand(authed):

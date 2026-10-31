@@ -233,14 +233,14 @@ def _digest(f: dict) -> str:
     return hashlib.sha256(json.dumps(f, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
-def ask_model(f: dict, system: str = SYSTEM_PROMPT) -> str:
+def ask_model(f: dict, system: str = SYSTEM_PROMPT, temperature: float = 0.4) -> str:
     body = {
         "model": settings.ollama_model,
         "messages": [{"role": "system", "content": system},
                      {"role": "user", "content": json.dumps(f, ensure_ascii=False, indent=1)}],
         "stream": False,
         "think": False,  # reasoning models: we only want the note
-        "options": {"temperature": 0.4},
+        "options": {"temperature": temperature},
     }
     url = f"{settings.ollama_url}/api/chat"
     r = httpx.post(url, json=body, timeout=TIMEOUT_S)

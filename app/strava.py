@@ -122,7 +122,7 @@ def upload(activity_id: int) -> None:
     """Upload the archived FIT file and poll until Strava has processed it.
     Runs in a background thread; progress is written to the activity row."""
     with connect() as conn:
-        a = conn.execute("SELECT stored_path, file_hash FROM activities WHERE id = ?",
+        a = conn.execute("SELECT stored_path, file_hash, name FROM activities WHERE id = ?",
                          (activity_id,)).fetchone()
     try:
         token = access_token()
@@ -131,7 +131,8 @@ def upload(activity_id: int) -> None:
         with open(path, "rb") as f:
             r = httpx.post(f"{API}/uploads", headers=headers, timeout=60,
                            files={"file": (path.name, f, "application/octet-stream")},
-                           data={"data_type": "fit", "external_id": f"soc-{a['file_hash'][:20]}"})
+                           data={"data_type": "fit", "external_id": f"soc-{a['file_hash'][:20]}",
+                                 "name": a["name"]})
         if r.status_code == 429:
             raise StravaError("Strava rate limit reached - try again in 15 minutes")
         if r.status_code not in (200, 201):

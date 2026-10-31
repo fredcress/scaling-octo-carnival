@@ -37,6 +37,16 @@ Garmin FR265 ──BLE──▶ Gadgetbridge (phone) ──Syncthing──▶ NA
   as soon as Sunday's run is in, it reviews the week just ending). Set
   `OLLAMA_URL` and `OLLAMA_MODEL`; Ollama must listen beyond localhost
   (`OLLAMA_HOST=0.0.0.0`).
+- **Activity titles** (optional, same local model): instead of "Afternoon Run",
+  each new activity gets a title from what made it different: the day (Halloween,
+  Christmas…), the weather and darkness, a PR, an unusually long or fast run, the
+  planned session. Ordinary runs get plain titles, special ones get poetic titles.
+  Edit a title with ✎ or ask for another with ✨ on the activity page;
+  **Settings → Title the other…** does older activities. Strava ignores any name
+  inside a `.fit` file, so **Upload on Strava** copies the title for you to paste
+  on Strava's upload page; **Push to Strava** (API) sends it along by itself.
+  Weather comes from [Open-Meteo](https://open-meteo.com) (free, no account), which
+  receives the start point rounded to ~1 km; set `WEATHER=false` to turn it off.
 - **Activity page**: OpenStreetMap route, pace / HR / elevation / cadence /
   power charts, time in HR zones, km splits, laps, best efforts with PR badges,
   Garmin training effect.
@@ -162,6 +172,8 @@ HTTPS too, or the browser blocks the iframe.
 | `PUBLIC_URL` | request URL | Base URL for the Strava OAuth callback. |
 | `STRAVA_REFRESH_TOKEN` | — | Optional alternative to the Connect button. |
 | `KIOSK_TOKEN` | — | Enables `/kiosk?token=…` without a login. See Kiosk mode. |
+| `OLLAMA_URL` / `OLLAMA_MODEL` | — | Local model for the coach note and activity titles. |
+| `WEATHER` | `true` | Weather in activity titles, from Open-Meteo. `false` turns it off. |
 
 After changing `MAX_HR` or `RESTING_HR`: restart, then **Settings →
 Recalculate all**.

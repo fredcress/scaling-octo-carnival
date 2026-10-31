@@ -48,7 +48,10 @@ CREATE TABLE IF NOT EXISTS activities (
     strava_upload_id INTEGER,
     strava_activity_id INTEGER,
     strava_error     TEXT,
-    imported_at      TEXT DEFAULT (datetime('now'))
+    imported_at      TEXT DEFAULT (datetime('now')),
+    title_source     TEXT,
+    title_tries      INTEGER NOT NULL DEFAULT 0,
+    weather          TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_act_date ON activities(local_date);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_act_start ON activities(start_utc, sport);
@@ -114,11 +117,23 @@ def connect():
         conn.close()
 
 
+# columns added after the first release: (table, column, type), added to older databases
+ADDED_COLUMNS = [
+    ("activities", "title_source", "TEXT"),  # 'ai' or 'you' once the name is a real title
+    ("activities", "title_tries", "INTEGER NOT NULL DEFAULT 0"),
+    ("activities", "weather", "TEXT"),  # JSON from Open-Meteo, fetched once for the title
+]
+
+
 def init_db() -> None:
     settings.fit_store.mkdir(parents=True, exist_ok=True)
     with connect() as conn:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.executescript(SCHEMA)
+        for table, col, kind in ADDED_COLUMNS:
+            have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+            if col not in have:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {kind}")
 
 
 def kv_get(key: str, default=None):

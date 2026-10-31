@@ -1,22 +1,20 @@
 import hmac
 import logging
 import secrets
-import struct
 import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
 from pathlib import Path
-from urllib.parse import quote
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Query, Request
-from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import analytics as an
-from . import adapt, coach, fitname, health, plan, queries, strava, watcher
+from . import adapt, coach, health, plan, queries, strava, titles, watcher
 from .config import settings
 from .db import connect, init_db, kv_delete, kv_get, kv_set
 from .fitimport import reprocess
@@ -130,7 +128,8 @@ api = Depends(require_user)
 def api_me():
     st = strava.status()
     # without API access the app helps with uploading by hand on strava.com instead
-    return {"strava_api": st["configured"] and st["connected"]}
+    return {"strava_api": st["configured"] and st["connected"],
+            "ai_titles": settings.coach_configured}
 
 
 @app.get("/api/summary", dependencies=[api])
@@ -179,10 +178,7 @@ def api_strava_push(activity_id: int, background: BackgroundTasks):
 
 
 @app.get("/api/activities/{activity_id}/fit", dependencies=[api])
-def api_fit_download(activity_id: int, title: str = Query("", max_length=120),
-                     into: str = Query("workout", pattern="^(workout|sport|both)$")):
-    """The archived .fit file. With `title`, a copy with that title written in as the
-    workout name and/or sport name (`into`); the archived file is never changed."""
+def api_fit_download(activity_id: int):
     with connect() as conn:
         r = conn.execute("SELECT stored_path, file_name FROM activities WHERE id = ?",
                          (activity_id,)).fetchone()
@@ -191,16 +187,53 @@ def api_fit_download(activity_id: int, title: str = Query("", max_length=120),
     path = Path(r["stored_path"] or "")
     if not path.is_file():
         raise HTTPException(404, "the stored .fit file is missing")
-    filename = r["file_name"] or f"activity-{activity_id}.fit"
-    if not title.strip():
-        return FileResponse(path, media_type="application/vnd.ant.fit", filename=filename)
+    return FileResponse(path, media_type="application/vnd.ant.fit",
+                        filename=r["file_name"] or f"activity-{activity_id}.fit")
+
+
+class TitleIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+
+
+def _activity_exists(activity_id: int) -> None:
+    with connect() as conn:
+        if not conn.execute("SELECT 1 FROM activities WHERE id = ?", (activity_id,)).fetchone():
+            raise HTTPException(404, "activity not found")
+
+
+@app.put("/api/activities/{activity_id}/title", dependencies=[api])
+def api_title_set(activity_id: int, body: TitleIn):
+    _activity_exists(activity_id)
+    name = " ".join(body.name.split())
+    if not name:
+        raise HTTPException(422, "the title is empty")
+    titles.set_title(activity_id, name)
+    return {"name": name, "title_source": "you"}
+
+
+@app.post("/api/activities/{activity_id}/title", dependencies=[api])
+def api_title_write(activity_id: int):
+    """A new AI title, written now (takes as long as the model needs)."""
+    if not settings.coach_configured:
+        raise HTTPException(400, "set OLLAMA_URL and OLLAMA_MODEL in .env to get AI titles")
+    _activity_exists(activity_id)
     try:
-        data = fitname.with_title(path.read_bytes(), title.strip(),
-                                  ("workout", "sport") if into == "both" else (into,))
-    except (ValueError, KeyError, IndexError, struct.error) as e:
-        raise HTTPException(422, f"could not add the title to this .fit file: {e}")
-    return Response(data, media_type="application/vnd.ant.fit", headers={
-        "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"})
+        name = titles.write_title(activity_id, wait=30)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"the model didn't give a title: {e}")
+    return {"name": name, "title_source": "ai"}
+
+
+@app.post("/api/titles/backfill", dependencies=[api])
+def api_titles_backfill():
+    """Titles for every activity that still has a plain name, in the background."""
+    if not settings.coach_configured:
+        raise HTTPException(400, "set OLLAMA_URL and OLLAMA_MODEL in .env to get AI titles")
+    if not titles.run_in_background(all_dates=True):
+        raise HTTPException(409, "already writing titles")
+    return titles.state()
 
 
 @app.post("/api/activities/{activity_id}/strava/manual", dependencies=[api])
@@ -392,6 +425,7 @@ def api_settings():
         "gadgetbridge_dir_exists": settings.gadgetbridge_dir.is_dir(),
         "health_import": kv_get("health_import"),
         "coach": coach.state(),
+        "titles": titles.state(),
         "reprocess": kv_get("reprocess"),
         "import_log": queries.import_log(),
     }

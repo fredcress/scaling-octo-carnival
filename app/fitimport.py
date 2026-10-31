@@ -128,6 +128,12 @@ def parse_fit(path: Path) -> dict:
             "local_offset": activity_local_offset, "vo2max": vo2max}
 
 
+def sport_label(sport: str, sub_sport: str) -> str:
+    """"Run", "Trail Run", "Ride"… as Strava would call the activity."""
+    label = SUB_SPORT_LABELS.get(sub_sport) if sport in ("running", "cycling") else None
+    return label or SPORT_LABELS.get(sport, sport.replace("_", " ").title())
+
+
 def _activity_name(label: str, local: datetime) -> str:
     h = local.hour
     part = ("Night" if h < 5 else "Morning" if h < 12 else "Lunch" if h < 14
@@ -206,11 +212,8 @@ def build_activity(raw: dict) -> dict:
             streams[key] = [round(v, 5 if key in ("lat", "lon") else 2) if v is not None else None
                             for v in vals]
 
-    label = SUB_SPORT_LABELS.get(sub_sport) if sport in ("running", "cycling") else None
-    label = label or SPORT_LABELS.get(sport, sport.replace("_", " ").title())
-
     row = {
-        "name": _activity_name(label, local),
+        "name": _activity_name(sport_label(sport, sub_sport), local),
         "sport": sport, "sub_sport": sub_sport, "is_run": int(sport in RUN_SPORTS),
         "start_utc": start.isoformat(), "start_local": local.isoformat(),
         "local_date": local.date().isoformat(),
@@ -282,10 +285,12 @@ def import_file(path: Path) -> tuple[str, str, int | None]:
 def reprocess(activity_id: int) -> None:
     """Recompute derived metrics from the archived FIT file (e.g. after a MAX_HR change)."""
     with connect() as conn:
-        a = conn.execute("SELECT stored_path FROM activities WHERE id = ?",
+        a = conn.execute("SELECT stored_path, title_source FROM activities WHERE id = ?",
                          (activity_id,)).fetchone()
     built = build_activity(parse_fit(Path(a["stored_path"])))
     row = built["row"]
+    if a["title_source"]:  # keep a title written by the AI or by hand
+        row.pop("name")
     sets = ", ".join(f"{k} = ?" for k in row)
     with connect() as conn:
         conn.execute(f"UPDATE activities SET {sets} WHERE id = ?",

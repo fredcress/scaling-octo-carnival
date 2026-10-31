@@ -93,6 +93,8 @@ const icons = {
   heart: I('<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21l7.8-7.5 1-1.1a5.5 5.5 0 0 0 0-7.8z"/>'),
   download: I('<path d="M12 4v12M6 10l6 6 6-6M4 20h16"/>'),
   flag: I('<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>'),
+  sparkle: I('<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/>'),
+  pencil: I('<path d="M4 20h4L19 9l-4-4L4 16v4zM14 6l4 4"/>'),
 };
 const sportIcon = (sport) =>
   `<span class="sport-ico">${{ running: icons.run, cycling: icons.ride, walking: icons.walk, hiking: icons.walk }[sport] || icons.other}</span>`;
@@ -256,6 +258,7 @@ function rolling(values, n) {
 /* ================================================================ strava button */
 
 let STRAVA_API = false;  // set from /api/me at start-up
+let AI_TITLES = false;  // the local model can write activity titles
 
 function stravaCell(a, { big = false } = {}) {
   const cls = big ? "" : "small";
@@ -274,7 +277,7 @@ function stravaCell(a, { big = false } = {}) {
     default:
       return STRAVA_API
         ? `<span class="strava-cell"><button class="strava ${cls}" data-strava="${a.id}">${icons.upload} Push to Strava</button>${markButton(a, big)}</span>`
-        : `<span class="strava-cell"><button class="strava ${cls}" data-strava-by-hand="${a.id}" title="Downloads the .fit and opens Strava's upload page">${icons.upload} Upload on Strava</button>${markButton(a, big)}</span>`;
+        : `<span class="strava-cell"><button class="strava ${cls}" data-strava-by-hand="${a.id}" data-title="${esc(a.name || "")}" title="Copies the title, downloads the .fit and opens Strava's upload page">${icons.upload} Upload on Strava</button>${markButton(a, big)}</span>`;
   }
 }
 
@@ -306,14 +309,47 @@ document.addEventListener("click", async (ev) => {
   }
 });
 
-/* without API access: download the .fit, open strava.com's upload page (where you're
-   logged in) to drop it in, then ask to tick it off here */
+/* copy text from a click. navigator.clipboard only exists on HTTPS, so on a plain
+   http://<nas> address fall back to the old copy command, which still works there */
+function copyText(text) {
+  if (!text) return false;
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).catch(() => toast("Couldn't copy the title"));
+    return true;
+  }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+  document.body.append(ta);
+  ta.select();
+  ta.setSelectionRange(0, text.length);
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch { ok = false; }
+  ta.remove();
+  return ok;
+}
+
+document.addEventListener("click", (ev) => {
+  const btn = ev.target.closest("[data-copy-title]");
+  if (!btn) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  toast(copyText(btn.dataset.copyTitle) ? "Title copied" : `Couldn't copy: ${btn.dataset.copyTitle}`);
+});
+
+/* without API access: copy the title, download the .fit, open strava.com's upload page
+   (where you're logged in) to drop it in, then ask to tick it off here */
 document.addEventListener("click", (ev) => {
   const btn = ev.target.closest("[data-strava-by-hand]");
   if (!btn) return;
   ev.preventDefault();
   ev.stopPropagation();
   const id = btn.dataset.stravaByHand;
+  // Strava ignores any name inside the .fit, so the title goes over by paste
+  const shown = $("#act-name");
+  const title = shown && shown.dataset.id === id ? shown.textContent : btn.dataset.title;
+  const copied = copyText(title);
   const dl = document.createElement("a");
   dl.href = `/api/activities/${id}/fit`;
   dl.download = "";
@@ -323,12 +359,16 @@ document.addEventListener("click", (ev) => {
   window.open("https://www.strava.com/upload/select", "_blank", "noopener");
   const big = !btn.classList.contains("small");
   const reopen = `href="https://www.strava.com/upload/select" target="_blank" rel="noopener"`;
+  const copy = title ? (big
+    ? `<button data-copy-title="${esc(title)}">${icons.pencil} Copy title</button>`
+    : `<button class="small icon" data-copy-title="${esc(title)}" title="Copy the title again">${icons.pencil}</button>`) : "";
   btn.closest(".strava-cell").outerHTML = big
     ? `<span class="strava-cell"><button data-strava-mark="${id}">${icons.check} Done, it's on Strava</button>
-        <a class="btn" ${reopen}>Reopen Strava</a></span>`
+        ${copy}<a class="btn" ${reopen}>Reopen Strava</a></span>`
     : `<span class="strava-cell"><button class="small" data-strava-mark="${id}">${icons.check} Done</button>
-        <a class="btn small icon" ${reopen} title="Reopen Strava's upload page">${icons.upload}</a></span>`;
-  toast("Drop the downloaded .fit file on Strava's upload page");
+        ${copy}<a class="btn small icon" ${reopen} title="Reopen Strava's upload page">${icons.upload}</a></span>`;
+  toast(copied ? "Title copied: drop the .fit on Strava's upload page, then paste it as the title"
+               : "Drop the downloaded .fit file on Strava's upload page");
 });
 
 /* one delegated handler for every Push to Strava button on any page */
@@ -1160,6 +1200,11 @@ function sessionStorageSet(k, v) { try { sessionStorage.setItem(k, v); } catch {
 
 /* ================================================================ activity detail */
 
+function weatherText(w) {
+  if (!w || w.temp_c == null) return "";
+  return ` · ${Math.round(w.temp_c)}°C${w.sky ? " " + esc(w.sky) : ""}`;
+}
+
 async function renderActivity(id) {
   const a = await api(`/api/activities/${id}`);
   const st = a.streams || {};
@@ -1207,8 +1252,10 @@ async function renderActivity(id) {
     <div class="page-head">
       <div>
         <div class="sub"><a href="#/activities">← Activities</a></div>
-        <h1>${sportIcon(a.sport)}${esc(a.name)}</h1>
-        <div class="sub">${fmt.dateTime(a.start_local)}${a.device ? " · " + esc(a.device) : ""}</div>
+        <h1 class="act-title">${sportIcon(a.sport)}<span id="act-name" data-id="${a.id}">${esc(a.name)}</span><span class="title-tools">
+          ${AI_TITLES ? `<button class="small icon" id="title-ai" title="Write a new title with the local AI">${icons.sparkle}</button>` : ""}
+          <button class="small icon" id="title-edit" title="Edit the title">${icons.pencil}</button></span></h1>
+        <div class="sub">${fmt.dateTime(a.start_local)}${weatherText(a.weather)}${a.device ? " · " + esc(a.device) : ""}</div>
       </div>
       <div class="head-actions">${fitLink(a, true)}${stravaCell(a, { big: true })}</div>
     </div>
@@ -1231,6 +1278,32 @@ async function renderActivity(id) {
       <tbody>${laps.map((l) => `<tr><td>${l.lap}</td><td class="r">${fmt.km(l.distance_m, 2)}</td><td class="r">${fmt.dur(l.time_s)}</td>
         <td class="r">${fmt.pace(l.pace_s_per_km)}</td><td class="r">${fmt.int(l.avg_hr)}</td><td class="r">${fmt.int(l.max_hr)}</td></tr>`).join("")}</tbody>
     </table></div></div>` : ""}`;
+
+  const nameEl = $("#act-name");
+  const showTitle = (name) => {
+    a.name = name;
+    nameEl.textContent = name;
+    document.querySelectorAll(`[data-strava-by-hand="${a.id}"]`).forEach((b) => { b.dataset.title = name; });
+  };
+  const aiBtn = $("#title-ai");
+  if (aiBtn) aiBtn.onclick = async () => {
+    aiBtn.disabled = true;
+    aiBtn.classList.add("busy");
+    toast("Writing a title…");
+    try { showTitle((await api(`/api/activities/${a.id}/title`, { method: "POST" })).name); toast("New title"); }
+    catch (err) { toast(err.message); }
+    finally { aiBtn.disabled = false; aiBtn.classList.remove("busy"); }
+  };
+  $("#title-edit").onclick = async () => {
+    const name = prompt("Title", a.name);
+    if (name == null || !name.trim() || name.trim() === a.name) return;
+    try {
+      const r = await api(`/api/activities/${a.id}/title`, {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }),
+      });
+      showTitle(r.name);
+    } catch (err) { toast(err.message); }
+  };
 
   if (a.polyline) {
     const m = L.map("map", { scrollWheelZoom: false });
@@ -1500,14 +1573,18 @@ async function renderSettings() {
       </div>
     </div>
     <div class="card">
-      <div class="card-head"><h2>Coach note (local AI)</h2>${s.coach.configured ? `<button id="coach-test">${icons.refresh} Write a note now</button>` : ""}</div>
+      <div class="card-head"><h2>Local AI: coach note and titles</h2>${s.coach.configured ? `<button id="coach-test">${icons.refresh} Write a note now</button>` : ""}</div>
       ${s.coach.configured ? `<dl class="kv">
           <dt>Ollama</dt><dd><code>${esc(s.coach.url)}</code></dd>
           <dt>Model</dt><dd><code>${esc(s.coach.model)}</code></dd>
           <dt>Status</dt><dd>${!s.coach.status ? "not tried yet"
             : s.coach.status.ok ? `<span class="pill good">${icons.check} working</span> last note ${fmt.dateTime(s.coach.status.at)}`
             : `<span class="pill err">${icons.alert} failed</span> ${esc(s.coach.status.error)} <span class="sub">(${fmt.dateTime(s.coach.status.at)})</span>`}</dd>
-        </dl>`
+          <dt>Titles</dt><dd>${titlesText(s.titles)}</dd>
+          <dt>Weather</dt><dd>${s.titles.weather ? "from Open-Meteo, for titles (sends a ~1 km rounded start point)" : "off (<code>WEATHER=false</code>)"}</dd>
+        </dl>
+        <p class="sub">New activities get a title on their own. ${s.titles.untitled
+          ? `<button class="small" id="titles-backfill" ${s.titles.running ? "disabled" : ""}>${icons.sparkle} Title the other ${s.titles.untitled}</button>` : ""}</p>`
         : `<p class="sub">Set <code>OLLAMA_URL</code> and <code>OLLAMA_MODEL</code> in <code>.env</code> to get a short daily note on the dashboard, written by a model running on your own network from the numbers the app computes.</p>`}
     </div>
     <div class="card">
@@ -1546,6 +1623,22 @@ async function renderSettings() {
       timers.push(h);
     } catch (err) { toast(err.message); ct.disabled = false; }
   };
+  const tb = $("#titles-backfill");
+  if (tb) tb.onclick = async () => {
+    tb.disabled = true;
+    try {
+      await api("/api/titles/backfill", { method: "POST" });
+      toast("Writing titles in the background… this page updates as they come in");
+      const h = setInterval(async () => {
+        const t = await api("/api/settings").then((x) => x.titles).catch(() => null);
+        if (!t) return;
+        const dd = $("#titles-state");
+        if (dd) dd.innerHTML = titlesText(t);
+        if (!t.running) { clearInterval(h); route(); }
+      }, 5000);
+      timers.push(h);
+    } catch (err) { toast(err.message); tb.disabled = false; }
+  };
   const off = $("#strava-off");
   if (off) off.onclick = async () => {
     if (!confirm("Disconnect Strava? Already uploaded activities stay on Strava.")) return;
@@ -1555,5 +1648,16 @@ async function renderSettings() {
   };
 }
 
+function titlesText(t) {
+  const st = t.status || {};
+  const bf = st.backfill;
+  const progress = t.running && bf ? ` ${bf.done} of ${bf.total}${bf.failed ? `, ${bf.failed} failed` : ""}` : "";
+  const body = t.running ? `<span class="pill">${icons.sparkle} writing…${progress}</span>`
+    : !t.status ? "none written yet"
+    : st.ok ? `<span class="pill good">${icons.check} working</span> latest: “${esc(st.last)}”`
+    : `<span class="pill err">${icons.alert} failed</span> ${esc(st.error)} <span class="sub">(${fmt.dateTime(st.at)})</span>`;
+  return `<span id="titles-state">${body}</span>`;
+}
+
 if (KIOSK) route();
-else api("/api/me").then((me) => { STRAVA_API = me.strava_api; }).catch(() => {}).finally(route);
+else api("/api/me").then((me) => { STRAVA_API = me.strava_api; AI_TITLES = me.ai_titles; }).catch(() => {}).finally(route);
