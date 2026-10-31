@@ -309,38 +309,42 @@ document.addEventListener("click", async (ev) => {
   }
 });
 
-/* copy text from a click. navigator.clipboard only exists on HTTPS, so on a plain
-   http://<nas> address fall back to the old copy command, which still works there */
-function copyText(text) {
+/* copy text from a click; resolves to whether it really worked.
+   The old copy command goes first because it is synchronous: navigator.clipboard is
+   async, and fails once the page loses focus (e.g. when the same tap opens Strava in
+   a new tab). It also only exists on HTTPS. */
+async function copyText(text) {
   if (!text) return false;
-  if (navigator.clipboard && window.isSecureContext) {
-    navigator.clipboard.writeText(text).catch(() => toast("Couldn't copy the title"));
-    return true;
-  }
+  const prev = document.activeElement;
   const ta = document.createElement("textarea");
   ta.value = text;
-  ta.setAttribute("readonly", "");
-  ta.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+  ta.setAttribute("inputmode", "none");  // no on-screen keyboard
+  ta.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0";
   document.body.append(ta);
+  ta.focus({ preventScroll: true });
   ta.select();
   ta.setSelectionRange(0, text.length);
   let ok = false;
   try { ok = document.execCommand("copy"); } catch { ok = false; }
   ta.remove();
+  if (prev && prev.focus) prev.focus({ preventScroll: true });
+  if (!ok && navigator.clipboard && window.isSecureContext) {
+    try { await navigator.clipboard.writeText(text); ok = true; } catch { ok = false; }
+  }
   return ok;
 }
 
-document.addEventListener("click", (ev) => {
+document.addEventListener("click", async (ev) => {
   const btn = ev.target.closest("[data-copy-title]");
   if (!btn) return;
   ev.preventDefault();
   ev.stopPropagation();
-  toast(copyText(btn.dataset.copyTitle) ? "Title copied" : `Couldn't copy: ${btn.dataset.copyTitle}`);
+  toast(await copyText(btn.dataset.copyTitle) ? "Title copied" : `Couldn't copy: ${btn.dataset.copyTitle}`);
 });
 
 /* without API access: copy the title, download the .fit, open strava.com's upload page
    (where you're logged in) to drop it in, then ask to tick it off here */
-document.addEventListener("click", (ev) => {
+document.addEventListener("click", async (ev) => {
   const btn = ev.target.closest("[data-strava-by-hand]");
   if (!btn) return;
   ev.preventDefault();
@@ -349,7 +353,8 @@ document.addEventListener("click", (ev) => {
   // Strava ignores any name inside the .fit, so the title goes over by paste
   const shown = $("#act-name");
   const title = shown && shown.dataset.id === id ? shown.textContent : btn.dataset.title;
-  const copied = copyText(title);
+  // copy before Strava opens: once its tab has focus, this page may no longer write
+  const copied = await copyText(title);
   const dl = document.createElement("a");
   dl.href = `/api/activities/${id}/fit`;
   dl.download = "";
@@ -368,6 +373,7 @@ document.addEventListener("click", (ev) => {
     : `<span class="strava-cell"><button class="small" data-strava-mark="${id}">${icons.check} Done</button>
         ${copy}<a class="btn small icon" ${reopen} title="Reopen Strava's upload page">${icons.upload}</a></span>`;
   toast(copied ? "Title copied: drop the .fit on Strava's upload page, then paste it as the title"
+               : title ? "Couldn't copy the title: tap Copy title here, then paste it on Strava"
                : "Drop the downloaded .fit file on Strava's upload page");
 });
 
