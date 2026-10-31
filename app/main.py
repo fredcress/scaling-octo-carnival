@@ -1,20 +1,22 @@
 import hmac
 import logging
 import secrets
+import struct
 import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
 from pathlib import Path
+from urllib.parse import quote
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Query, Request
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import analytics as an
-from . import adapt, coach, health, plan, queries, strava, watcher
+from . import adapt, coach, fitname, health, plan, queries, strava, watcher
 from .config import settings
 from .db import connect, init_db, kv_delete, kv_get, kv_set
 from .fitimport import reprocess
@@ -177,7 +179,10 @@ def api_strava_push(activity_id: int, background: BackgroundTasks):
 
 
 @app.get("/api/activities/{activity_id}/fit", dependencies=[api])
-def api_fit_download(activity_id: int):
+def api_fit_download(activity_id: int, title: str = Query("", max_length=120),
+                     into: str = Query("workout", pattern="^(workout|sport|both)$")):
+    """The archived .fit file. With `title`, a copy with that title written in as the
+    workout name and/or sport name (`into`); the archived file is never changed."""
     with connect() as conn:
         r = conn.execute("SELECT stored_path, file_name FROM activities WHERE id = ?",
                          (activity_id,)).fetchone()
@@ -186,8 +191,16 @@ def api_fit_download(activity_id: int):
     path = Path(r["stored_path"] or "")
     if not path.is_file():
         raise HTTPException(404, "the stored .fit file is missing")
-    return FileResponse(path, media_type="application/vnd.ant.fit",
-                        filename=r["file_name"] or f"activity-{activity_id}.fit")
+    filename = r["file_name"] or f"activity-{activity_id}.fit"
+    if not title.strip():
+        return FileResponse(path, media_type="application/vnd.ant.fit", filename=filename)
+    try:
+        data = fitname.with_title(path.read_bytes(), title.strip(),
+                                  ("workout", "sport") if into == "both" else (into,))
+    except (ValueError, KeyError, IndexError, struct.error) as e:
+        raise HTTPException(422, f"could not add the title to this .fit file: {e}")
+    return Response(data, media_type="application/vnd.ant.fit", headers={
+        "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"})
 
 
 @app.post("/api/activities/{activity_id}/strava/manual", dependencies=[api])
