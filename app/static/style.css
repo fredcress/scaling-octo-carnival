@@ -216,6 +216,16 @@ dl.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 }
 .form input:focus, .form select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
+.prompt-edit { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+.prompt-edit summary { cursor: pointer; font-weight: 550; font-size: 14px; }
+.prompt-edit textarea {
+  display: block; width: 100%; box-sizing: border-box; margin-top: 8px; resize: vertical;
+  font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink);
+  background: var(--page); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+}
+.prompt-edit textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.prompt-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+
 /* ---------------------------------------------------------------- plan */
 .key.planned { background: var(--muted); opacity: .35; }
 .plan-table td.wrap { white-space: normal; min-width: 220px; }

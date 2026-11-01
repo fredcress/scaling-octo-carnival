@@ -45,6 +45,8 @@ Garmin FR265 ──BLE──▶ Gadgetbridge (phone) ──Syncthing──▶ NA
   **Settings → Title the other…** does older activities. Strava ignores any name
   inside a `.fit` file, so **Upload on Strava** copies the title for you to paste
   on Strava's upload page; **Push to Strava** (API) sends it along by itself.
+  **Settings → Title instructions** shows what the model is told (rules and
+  example titles); edit it there, or **Reset to default** to go back.
   Weather comes from [Open-Meteo](https://open-meteo.com) (free, no account), which
   receives the start point rounded to ~1 km; set `WEATHER=false` to turn it off.
 - **Activity page**: OpenStreetMap route, pace / HR / elevation / cadence /

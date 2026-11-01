@@ -1618,7 +1618,17 @@ async function renderSettings() {
           <dt>Weather</dt><dd>${s.titles.weather ? "from Open-Meteo, for titles (sends a ~1 km rounded start point)" : "off (<code>WEATHER=false</code>)"}</dd>
         </dl>
         <p class="sub">Activities from the last ${s.titles.title_days} day${s.titles.title_days === 1 ? "" : "s"} get a title on their own (<code>TITLE_DAYS</code>). ${s.titles.untitled
-          ? `<button class="small" id="titles-backfill" ${s.titles.running ? "disabled" : ""}>${icons.sparkle} Title the other ${s.titles.untitled}</button>` : ""}</p>`
+          ? `<button class="small" id="titles-backfill" ${s.titles.running ? "disabled" : ""}>${icons.sparkle} Title the other ${s.titles.untitled}</button>` : ""}</p>
+        <details class="prompt-edit" id="title-prompt">
+          <summary>Title instructions <span class="pill">${s.titles.custom_prompt ? "yours" : "default"}</span></summary>
+          <p class="sub">What the model is told before it sees each run's facts (distance, pace, weather, notes, recent titles). Change the rules or the examples; new titles use it straight away.</p>
+          <textarea id="title-prompt-text" rows="14" spellcheck="true" placeholder="Loading…"></textarea>
+          <div class="prompt-actions">
+            <button class="small" id="title-prompt-save">${icons.check} Save</button>
+            <button class="small" id="title-prompt-reset">${icons.refresh} Reset to default</button>
+            <span class="sub" id="title-prompt-state"></span>
+          </div>
+        </details>`
         : `<p class="sub">Set <code>OLLAMA_URL</code> and <code>OLLAMA_MODEL</code> in <code>.env</code> to get a short daily note on the dashboard, written by a model running on your own network from the numbers the app computes.</p>`}
     </div>
     <div class="card">
@@ -1673,6 +1683,33 @@ async function renderSettings() {
       timers.push(h);
     } catch (err) { toast(err.message); tb.disabled = false; }
   };
+  const tp = $("#title-prompt");
+  if (tp) {
+    const box = $("#title-prompt-text"), note = $("#title-prompt-state");
+    const show = (p) => {
+      box.value = p.prompt;
+      tp.querySelector("summary .pill").textContent = p.custom ? "yours" : "default";
+      $("#title-prompt-reset").disabled = !p.custom;
+    };
+    tp.addEventListener("toggle", () => {
+      if (tp.open && !box.value) api("/api/titles/prompt").then(show).catch((err) => toast(err.message));
+    });
+    $("#title-prompt-save").onclick = async (e) => {
+      e.currentTarget.disabled = true;
+      try {
+        show(await api("/api/titles/prompt", {
+          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: box.value }),
+        }));
+        note.textContent = "Saved: the next title uses it. Try ✨ on a run.";
+      } catch (err) { toast(err.message); }
+      $("#title-prompt-save").disabled = false;
+    };
+    $("#title-prompt-reset").onclick = async () => {
+      if (!confirm("Put the built-in title instructions back? Your version is lost.")) return;
+      try { show(await api("/api/titles/prompt", { method: "DELETE" })); note.textContent = "Back to the default."; }
+      catch (err) { toast(err.message); }
+    };
+  }
   const off = $("#strava-off");
   if (off) off.onclick = async () => {
     if (!confirm("Disconnect Strava? Already uploaded activities stay on Strava.")) return;

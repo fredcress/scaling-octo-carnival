@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import coach, main, strava, titles, watcher
-from app.db import connect, kv_delete, kv_set
+from app.db import connect, kv_delete, kv_get, kv_set
 from app.fitimport import reprocess
 
 H = {"X-Requested-With": "fetch"}
@@ -43,6 +43,7 @@ def llm(imported, monkeypatch):
     for mod in (coach, titles, main):
         monkeypatch.setattr(mod, "settings", cfg)
     kv_delete("titles_status")
+    kv_delete("title_prompt")
     with connect() as conn:
         saved = [dict(r) for r in conn.execute("SELECT id, name FROM activities")]
         conn.execute("UPDATE activities SET title_source = NULL, title_tries = 0, weather = NULL")
@@ -271,3 +272,26 @@ def test_api(authed):
     s = authed.get("/api/settings").json()["titles"]
     assert s["configured"] and s["status"]["last"] == "Rainy Riverside Shuffle"
     assert s["untitled"] == 2
+
+
+def test_custom_prompt(authed):
+    r = authed.get("/api/titles/prompt").json()
+    assert r == {"prompt": titles.TITLE_PROMPT, "default": titles.TITLE_PROMPT, "custom": False}
+    assert authed.put("/api/titles/prompt", json={"prompt": "short"}, headers=H).status_code == 422
+    mine = "Write a title like a pirate would. At most 60 characters."
+    r = authed.put("/api/titles/prompt", json={"prompt": f"  {mine}\n"}, headers=H).json()
+    assert r["prompt"] == mine and r["custom"] is True
+    assert authed.get("/api/settings").json()["titles"]["custom_prompt"] is True
+    assert titles.prompt() == mine
+    r = authed.delete("/api/titles/prompt", headers=H).json()
+    assert r["custom"] is False and r["prompt"] == titles.TITLE_PROMPT
+    # saving the default text (or nothing) is the same as a reset
+    titles.set_prompt(titles.TITLE_PROMPT)
+    assert kv_get("title_prompt") is None
+
+
+def test_custom_prompt_reaches_the_model(llm):
+    sent, _, _ = llm
+    titles.set_prompt("Only ever answer with a haiku-length title about cheese.")
+    titles.write_title(run_id())
+    assert sent[0]["messages"][0]["content"].startswith("Only ever answer")

@@ -17,7 +17,7 @@ import httpx
 from . import analytics as an
 from . import coach, queries
 from .config import settings
-from .db import connect, kv_get, kv_set
+from .db import connect, kv_delete, kv_get, kv_set
 from .fitimport import sport_label
 
 log = logging.getLogger(__name__)
@@ -50,6 +50,23 @@ Examples of the range, for tone only (never reuse them): an ordinary easy run in
 "Tuesday legs, Tuesday drizzle"; a dark winter evening "Headtorch weather"; a new 5 km \
 record "Five kilometres, new best, no regrets"; a first half marathon on a sunny morning \
 "Twenty-one point one and a golden sky"."""
+
+PROMPT_MIN, PROMPT_MAX = 20, 8000
+
+
+def prompt() -> str:
+    """The instructions the model gets: yours from Settings, or TITLE_PROMPT."""
+    return kv_get("title_prompt") or TITLE_PROMPT
+
+
+def set_prompt(text: str | None) -> None:
+    """Save your own instructions; None, empty or the default puts TITLE_PROMPT back."""
+    text = (text or "").strip()
+    if not text or text == TITLE_PROMPT:
+        kv_delete("title_prompt")
+    else:
+        kv_set("title_prompt", text)
+
 
 GENERIC = re.compile(r"^(early )?(morning|lunch|afternoon|evening|night) [a-z -]+$", re.I)
 
@@ -331,7 +348,7 @@ def write_title(activity_id: int, wait: float = 0) -> str:
     try:
         try:
             f = facts(activity_id)
-            title = clean(coach.ask_model(f, TITLE_PROMPT, temperature=0.9))
+            title = clean(coach.ask_model(f, prompt(), temperature=0.9))
             notes = {n.lower() for k in ("milestones", "compared_with_usual", "personal_records")
                      for n in f.get(k, [])}
             if title.lower() in notes:  # a note copied as the title, e.g. "Longest run ever"
@@ -411,5 +428,5 @@ def state() -> dict:
     with connect() as conn:
         waiting = conn.execute("SELECT COUNT(*) FROM activities WHERE title_source IS NULL").fetchone()[0]
     return {"configured": settings.coach_configured, "weather": settings.weather,
-            "title_days": settings.title_days,
+            "title_days": settings.title_days, "custom_prompt": kv_get("title_prompt") is not None,
             "running": _worker.locked(), "untitled": waiting, "status": kv_get("titles_status")}

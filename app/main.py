@@ -239,6 +239,32 @@ def api_title_write(activity_id: int):
     return {"name": name, "title_source": "ai"}
 
 
+class PromptIn(BaseModel):
+    prompt: str = Field(..., max_length=titles.PROMPT_MAX)
+
+
+@app.get("/api/titles/prompt", dependencies=[api])
+def api_title_prompt():
+    """The instructions the model gets for titles, and the built-in ones to go back to."""
+    return {"prompt": titles.prompt(), "default": titles.TITLE_PROMPT,
+            "custom": titles.prompt() != titles.TITLE_PROMPT}
+
+
+@app.put("/api/titles/prompt", dependencies=[api])
+def api_title_prompt_set(body: PromptIn):
+    text = body.prompt.strip()
+    if text and len(text) < titles.PROMPT_MIN:
+        raise HTTPException(422, f"too short: write at least {titles.PROMPT_MIN} characters, or reset to the default")
+    titles.set_prompt(text)
+    return api_title_prompt()
+
+
+@app.delete("/api/titles/prompt", dependencies=[api])
+def api_title_prompt_reset():
+    titles.set_prompt(None)
+    return api_title_prompt()
+
+
 @app.post("/api/titles/backfill", dependencies=[api])
 def api_titles_backfill():
     """Titles for every activity that still has a plain name, in the background."""
