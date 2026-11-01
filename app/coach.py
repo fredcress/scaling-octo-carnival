@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from . import queries
+from . import ai, queries
 from .config import settings
 from .db import connect, kv_get, kv_set
 
@@ -233,13 +233,14 @@ def _digest(f: dict) -> str:
     return hashlib.sha256(json.dumps(f, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
-def ask_model(f: dict, system: str = SYSTEM_PROMPT, temperature: float = 0.4) -> str:
+def ask_model(f: dict, system: str = SYSTEM_PROMPT, temperature: float = 0.4,
+              think: bool = False) -> str:
     body = {
         "model": settings.ollama_model,
         "messages": [{"role": "system", "content": system},
                      {"role": "user", "content": json.dumps(f, ensure_ascii=False, indent=1)}],
         "stream": False,
-        "think": False,  # reasoning models: we only want the note
+        "think": think,  # reasoning models: the answer comes back without the thinking
         "options": {"temperature": temperature},
     }
     url = f"{settings.ollama_url}/api/chat"
@@ -265,7 +266,7 @@ def _write(key: str, f: dict, system: str, force: bool, extra: dict) -> dict | N
         return old
     started = time.time()
     try:
-        text = ask_model(f, system)
+        text = ask_model(f, system, think=ai.think("coach"))
     except (httpx.HTTPError, ValueError, KeyError) as e:
         kv_set("coach_status", {"ok": False, "error": f"{type(e).__name__}: {e}",
                                 "at": datetime.now(timezone.utc).isoformat()})
@@ -289,11 +290,11 @@ def generate(force: bool = False, what: tuple = ("note", "review")) -> dict | No
         note = None
         if "note" in what:
             f = facts()
-            note = _write("coach_note", f, SYSTEM_PROMPT, force, {"date": f["date"]})
+            note = _write("coach_note", f, ai.prompt("note", SYSTEM_PROMPT), force, {"date": f["date"]})
         if "review" in what:
             wf = week_facts()
             if wf:
-                _write("weekly_review", wf, REVIEW_PROMPT, force and "note" not in what,
+                _write("weekly_review", wf, ai.prompt("review", REVIEW_PROMPT), force and "note" not in what,
                        {"week": wf["week"]})
         return note
     finally:

@@ -6,7 +6,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app import coach, main, strava, titles, watcher
+from app import ai, coach, main, strava, titles, watcher
 from app.db import connect, kv_delete, kv_get, kv_set
 from app.fitimport import reprocess
 
@@ -43,7 +43,8 @@ def llm(imported, monkeypatch):
     for mod in (coach, titles, main):
         monkeypatch.setattr(mod, "settings", cfg)
     kv_delete("titles_status")
-    kv_delete("title_prompt")
+    for k in ("title_prompt", "note_prompt", "review_prompt", "ai_think"):
+        kv_delete(k)
     with connect() as conn:
         saved = [dict(r) for r in conn.execute("SELECT id, name FROM activities")]
         conn.execute("UPDATE activities SET title_source = NULL, title_tries = 0, weather = NULL")
@@ -60,6 +61,8 @@ def llm(imported, monkeypatch):
     monkeypatch.setattr(httpx, "post", post)
     monkeypatch.setattr(httpx, "get", get)
     yield sent, replies, weather_calls
+    for k in ("title_prompt", "note_prompt", "review_prompt", "ai_think"):
+        kv_delete(k)
     with connect() as conn:
         conn.executemany("UPDATE activities SET name = ? WHERE id = ?", [(r["name"], r["id"]) for r in saved])
         conn.execute("UPDATE activities SET title_source = NULL, title_tries = 0, weather = NULL")
@@ -274,24 +277,44 @@ def test_api(authed):
     assert s["untitled"] == 2
 
 
-def test_custom_prompt(authed):
-    r = authed.get("/api/titles/prompt").json()
-    assert r == {"prompt": titles.TITLE_PROMPT, "default": titles.TITLE_PROMPT, "custom": False}
-    assert authed.put("/api/titles/prompt", json={"prompt": "short"}, headers=H).status_code == 422
+def test_ai_settings_api(authed):
+    st = authed.get("/api/ai").json()
+    assert [p["name"] for p in st["prompts"]] == ["note", "review", "title"]
+    title = st["prompts"][2]
+    assert title["prompt"] == titles.TITLE_PROMPT and not title["custom"] and not title["think"]
+    assert st["think"] == {"coach": False, "titles": False}
+    assert authed.put("/api/ai/prompts/title", json={"prompt": "short"}, headers=H).status_code == 422
+    assert authed.put("/api/ai/prompts/nope", json={"prompt": "x" * 30}, headers=H).status_code == 404
     mine = "Write a title like a pirate would. At most 60 characters."
-    r = authed.put("/api/titles/prompt", json={"prompt": f"  {mine}\n"}, headers=H).json()
-    assert r["prompt"] == mine and r["custom"] is True
-    assert authed.get("/api/settings").json()["titles"]["custom_prompt"] is True
-    assert titles.prompt() == mine
-    r = authed.delete("/api/titles/prompt", headers=H).json()
-    assert r["custom"] is False and r["prompt"] == titles.TITLE_PROMPT
-    # saving the default text (or nothing) is the same as a reset
-    titles.set_prompt(titles.TITLE_PROMPT)
+    st = authed.put("/api/ai/prompts/title", json={"prompt": f"  {mine}\n"}, headers=H).json()
+    assert st["prompts"][2]["prompt"] == mine and st["prompts"][2]["custom"]
+    assert not st["prompts"][0]["custom"]  # the others are untouched
+    assert authed.get("/api/settings").json()["ai"]["prompts"][2]["custom"]
+    st = authed.delete("/api/ai/prompts/title", headers=H).json()
+    assert st["prompts"][2]["prompt"] == titles.TITLE_PROMPT and not st["prompts"][2]["custom"]
+    ai.set_prompt("title", titles.TITLE_PROMPT)  # saving the default is a reset
     assert kv_get("title_prompt") is None
 
+    st = authed.put("/api/ai/think", json={"titles": True}, headers=H).json()
+    assert st["think"] == {"coach": False, "titles": True} and st["prompts"][2]["think"]
+    st = authed.put("/api/ai/think", json={"coach": True, "titles": False}, headers=H).json()
+    assert st["think"] == {"coach": True, "titles": False}
 
-def test_custom_prompt_reaches_the_model(llm):
+
+def test_prompt_and_thinking_reach_the_model(llm):
     sent, _, _ = llm
-    titles.set_prompt("Only ever answer with a haiku-length title about cheese.")
     titles.write_title(run_id())
-    assert sent[0]["messages"][0]["content"].startswith("Only ever answer")
+    assert sent[0]["think"] is False
+    ai.set_prompt("title", "Only ever answer with a short title about cheese.")
+    ai.set_think("titles", True)
+    titles.write_title(run_id())
+    assert sent[1]["messages"][0]["content"].startswith("Only ever answer") and sent[1]["think"] is True
+
+
+def test_coach_prompts_and_thinking(llm):
+    sent, _, _ = llm
+    ai.set_prompt("note", "You are a pirate running coach. Three sentences.")
+    ai.set_think("coach", True)
+    coach.generate(force=True, what=("note",))
+    assert sent[-1]["messages"][0]["content"].startswith("You are a pirate") and sent[-1]["think"] is True
+    kv_delete("coach_note")

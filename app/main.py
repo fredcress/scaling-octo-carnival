@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import analytics as an
-from . import adapt, coach, health, plan, queries, strava, titles, watcher
+from . import adapt, ai, coach, health, plan, queries, strava, titles, watcher
 from .config import settings
 from .db import connect, init_db, kv_delete, kv_get, kv_set
 from .fitimport import reprocess
@@ -240,29 +240,44 @@ def api_title_write(activity_id: int):
 
 
 class PromptIn(BaseModel):
-    prompt: str = Field(..., max_length=titles.PROMPT_MAX)
+    prompt: str = Field(..., max_length=ai.PROMPT_MAX)
 
 
-@app.get("/api/titles/prompt", dependencies=[api])
-def api_title_prompt():
-    """The instructions the model gets for titles, and the built-in ones to go back to."""
-    return {"prompt": titles.prompt(), "default": titles.TITLE_PROMPT,
-            "custom": titles.prompt() != titles.TITLE_PROMPT}
+class ThinkIn(BaseModel):
+    coach: bool | None = None
+    titles: bool | None = None
 
 
-@app.put("/api/titles/prompt", dependencies=[api])
-def api_title_prompt_set(body: PromptIn):
+@app.get("/api/ai", dependencies=[api])
+def api_ai():
+    """The prompts (yours or the built-in ones) and the thinking switches."""
+    return ai.state()
+
+
+@app.put("/api/ai/prompts/{name}", dependencies=[api])
+def api_ai_prompt_set(name: str, body: PromptIn):
+    if name not in ai.defaults():
+        raise HTTPException(404, "no such prompt")
     text = body.prompt.strip()
-    if text and len(text) < titles.PROMPT_MIN:
-        raise HTTPException(422, f"too short: write at least {titles.PROMPT_MIN} characters, or reset to the default")
-    titles.set_prompt(text)
-    return api_title_prompt()
+    if text and len(text) < ai.PROMPT_MIN:
+        raise HTTPException(422, f"too short: write at least {ai.PROMPT_MIN} characters, or reset to the default")
+    ai.set_prompt(name, text)
+    return ai.state()
 
 
-@app.delete("/api/titles/prompt", dependencies=[api])
-def api_title_prompt_reset():
-    titles.set_prompt(None)
-    return api_title_prompt()
+@app.delete("/api/ai/prompts/{name}", dependencies=[api])
+def api_ai_prompt_reset(name: str):
+    if name not in ai.defaults():
+        raise HTTPException(404, "no such prompt")
+    ai.set_prompt(name, None)
+    return ai.state()
+
+
+@app.put("/api/ai/think", dependencies=[api])
+def api_ai_think(body: ThinkIn):
+    for group, on in body.model_dump(exclude_none=True).items():
+        ai.set_think(group, on)
+    return ai.state()
 
 
 @app.post("/api/titles/backfill", dependencies=[api])
@@ -465,6 +480,7 @@ def api_settings():
         "health_import": kv_get("health_import"),
         "coach": coach.state(),
         "titles": titles.state(),
+        "ai": ai.state(),
         "reprocess": kv_get("reprocess"),
         "import_log": queries.import_log(),
     }

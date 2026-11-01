@@ -1619,16 +1619,22 @@ async function renderSettings() {
         </dl>
         <p class="sub">Activities from the last ${s.titles.title_days} day${s.titles.title_days === 1 ? "" : "s"} get a title on their own (<code>TITLE_DAYS</code>). ${s.titles.untitled
           ? `<button class="small" id="titles-backfill" ${s.titles.running ? "disabled" : ""}>${icons.sparkle} Title the other ${s.titles.untitled}</button>` : ""}</p>
-        <details class="prompt-edit" id="title-prompt">
-          <summary>Title instructions <span class="pill">${s.titles.custom_prompt ? "yours" : "default"}</span></summary>
-          <p class="sub">What the model is told before it sees each run's facts (distance, pace, weather, notes, recent titles). Change the rules or the examples; new titles use it straight away.</p>
-          <textarea id="title-prompt-text" rows="14" spellcheck="true" placeholder="Loading…"></textarea>
+        <div class="ai-think">
+          <span class="ai-think-head">Thinking mode</span>
+          <label><input type="checkbox" data-think="coach" ${s.ai.think.coach ? "checked" : ""}> Coach note and weekly review</label>
+          <label><input type="checkbox" data-think="titles" ${s.ai.think.titles ? "checked" : ""}> Titles</label>
+          <p class="sub">The model reasons before it answers: often better writing, but slower (can be a minute or more for a 27B model). Only for models that can think, like Qwen 3; others ignore it.</p>
+        </div>
+        ${s.ai.prompts.map((p) => `<details class="prompt-edit" data-prompt="${p.name}">
+          <summary>${esc(p.label)}: instructions <span class="pill">${p.custom ? "yours" : "default"}</span></summary>
+          <p class="sub">What the model is told before it sees the facts the app computed. ${p.name === "title" ? "Change the rules or the example titles at the end." : "Change the rules, length or tone."} The next ${p.name === "title" ? "title" : "note"} uses it straight away.</p>
+          <textarea rows="14" spellcheck="true">${esc(p.prompt)}</textarea>
           <div class="prompt-actions">
-            <button class="small" id="title-prompt-save">${icons.check} Save</button>
-            <button class="small" id="title-prompt-reset">${icons.refresh} Reset to default</button>
-            <span class="sub" id="title-prompt-state"></span>
+            <button class="small" data-act="save">${icons.check} Save</button>
+            <button class="small" data-act="reset" ${p.custom ? "" : "disabled"}>${icons.refresh} Reset to default</button>
+            <span class="sub" data-act="state"></span>
           </div>
-        </details>`
+        </details>`).join("")}`
         : `<p class="sub">Set <code>OLLAMA_URL</code> and <code>OLLAMA_MODEL</code> in <code>.env</code> to get a short daily note on the dashboard, written by a model running on your own network from the numbers the app computes.</p>`}
     </div>
     <div class="card">
@@ -1683,33 +1689,44 @@ async function renderSettings() {
       timers.push(h);
     } catch (err) { toast(err.message); tb.disabled = false; }
   };
-  const tp = $("#title-prompt");
-  if (tp) {
-    const box = $("#title-prompt-text"), note = $("#title-prompt-state");
-    const show = (p) => {
-      box.value = p.prompt;
-      tp.querySelector("summary .pill").textContent = p.custom ? "yours" : "default";
-      $("#title-prompt-reset").disabled = !p.custom;
-    };
-    tp.addEventListener("toggle", () => {
-      if (tp.open && !box.value) api("/api/titles/prompt").then(show).catch((err) => toast(err.message));
-    });
-    $("#title-prompt-save").onclick = async (e) => {
-      e.currentTarget.disabled = true;
+  document.querySelectorAll("[data-think]").forEach((cb) => {
+    cb.onchange = async () => {
+      cb.disabled = true;
       try {
-        show(await api("/api/titles/prompt", {
+        await api("/api/ai/think", {
+          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ [cb.dataset.think]: cb.checked }),
+        });
+        toast(`Thinking ${cb.checked ? "on" : "off"} for ${cb.dataset.think === "coach" ? "the coach note and review" : "titles"}`);
+      } catch (err) { toast(err.message); cb.checked = !cb.checked; }
+      cb.disabled = false;
+    };
+  });
+  document.querySelectorAll("details[data-prompt]").forEach((d) => {
+    const name = d.dataset.prompt, box = d.querySelector("textarea");
+    const note = d.querySelector('[data-act="state"]'), reset = d.querySelector('[data-act="reset"]');
+    const show = (st) => {
+      const p = st.prompts.find((x) => x.name === name);
+      box.value = p.prompt;
+      d.querySelector("summary .pill").textContent = p.custom ? "yours" : "default";
+      reset.disabled = !p.custom;
+    };
+    d.querySelector('[data-act="save"]').onclick = async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      try {
+        show(await api(`/api/ai/prompts/${name}`, {
           method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: box.value }),
         }));
-        note.textContent = "Saved: the next title uses it. Try ✨ on a run.";
+        note.textContent = name === "title" ? "Saved: try ✨ on a run." : "Saved: tap “Write a note now” to try it.";
       } catch (err) { toast(err.message); }
-      $("#title-prompt-save").disabled = false;
+      btn.disabled = false;
     };
-    $("#title-prompt-reset").onclick = async () => {
-      if (!confirm("Put the built-in title instructions back? Your version is lost.")) return;
-      try { show(await api("/api/titles/prompt", { method: "DELETE" })); note.textContent = "Back to the default."; }
+    reset.onclick = async () => {
+      if (!confirm("Put the built-in instructions back? Your version is lost.")) return;
+      try { show(await api(`/api/ai/prompts/${name}`, { method: "DELETE" })); note.textContent = "Back to the default."; }
       catch (err) { toast(err.message); }
     };
-  }
+  });
   const off = $("#strava-off");
   if (off) off.onclick = async () => {
     if (!confirm("Disconnect Strava? Already uploaded activities stay on Strava.")) return;

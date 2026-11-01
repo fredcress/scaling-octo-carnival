@@ -216,6 +216,10 @@ dl.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 }
 .form input:focus, .form select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
+.ai-think { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; display: grid; gap: 6px; }
+.ai-think-head { font-weight: 550; font-size: 14px; }
+.ai-think label { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+.ai-think .sub { margin: 0; }
 .prompt-edit { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
 .prompt-edit summary { cursor: pointer; font-weight: 550; font-size: 14px; }
 .prompt-edit textarea {
